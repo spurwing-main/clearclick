@@ -5,7 +5,7 @@ function main() {
 		console.warn("[clearclick] Motion library not found on window.Motion");
 	}
 
-	const { animate, inView } = MotionGlobal || {};
+	const { animate, inView, stagger } = MotionGlobal || {};
 
 	function hideShowNav() {
 		const nav = document.querySelector(".nav");
@@ -126,48 +126,63 @@ Ref: Studio Everywhere / Releaf.bio
 			return;
 		}
 
-		// Only bother if we actually have counters on this page
-		const counterSelector = "[data-motion-counter='true']";
-		if (!document.querySelector(counterSelector)) return;
+		// Bail if there are no counters at all
+		if (!document.querySelector("[data-count-target]")) return;
 
-		inView(
-			counterSelector,
-			(element) => {
-				const target = parseFloat(element.getAttribute("data-count-target") || "0");
-				if (Number.isNaN(target)) return;
+		const triggers = document.querySelectorAll("[data-count-trigger='true']");
+		if (!triggers.length) return;
 
-				const duration = parseFloat(element.getAttribute("data-count-duration") || "1.2");
-				const prefix = element.getAttribute("data-count-prefix") || "";
-				const suffix = element.getAttribute("data-count-suffix") || "";
-				const decimals = parseInt(element.getAttribute("data-count-decimals") || "0", 10);
+		triggers.forEach((trigger) => {
+			// All counters inside this trigger
+			const elements = trigger.querySelectorAll("[data-count-target]");
+			if (!elements.length) return;
 
-				// Use Intl for formatting
-				const formatter = new Intl.NumberFormat("en-GB", {
-					minimumFractionDigits: decimals,
-					maximumFractionDigits: decimals,
-				});
+			// per-group stagger value
+			const baseStagger = parseFloat(trigger.getAttribute("data-count-stagger") || "0.15") || 0;
 
-				// start from existing text, stripped of junk
-				const initial = parseFloat((element.textContent || "").replace(/[^\d.-]/g, ""));
-				const from = Number.isFinite(initial) ? initial : 0;
+			inView(
+				trigger,
+				() => {
+					elements.forEach((element, index) => {
+						const target = parseFloat(element.getAttribute("data-count-target") || "0");
+						if (Number.isNaN(target)) return;
 
-				// Make sure the element starts at the "from" value
-				element.textContent = `${prefix}${formatter.format(from)}${suffix}`;
+						const duration = parseFloat(element.getAttribute("data-count-duration") || "1.2");
+						const prefix = element.getAttribute("data-count-prefix") || "";
+						const suffix = element.getAttribute("data-count-suffix") || "";
+						const decimals = parseInt(element.getAttribute("data-count-decimals") || "0", 10);
 
-				// Kick off the animation once it enters view.
-				animate(from, target, {
-					duration,
-					ease: "spring",
-					onUpdate(latest) {
-						const value = decimals > 0 ? latest : Math.round(latest);
-						element.textContent = `${prefix}${formatter.format(value)}${suffix}`;
-					},
-				});
-			},
-			{
-				margin: "0px 0px -10% 0px", // trigger a bit earlier
-			}
-		);
+						// Number formatting
+						const formatter = new Intl.NumberFormat("en-GB", {
+							minimumFractionDigits: decimals,
+							maximumFractionDigits: decimals,
+						});
+
+						// Start from existing text (stripped) or 0
+						const initial = parseFloat((element.textContent || "").replace(/[^\d.-]/g, ""));
+						const from = Number.isFinite(initial) ? initial : 0;
+
+						// Ensure initial text
+						element.textContent = `${prefix}${formatter.format(from)}${suffix}`;
+
+						// Animate with per-element delay
+						animate(from, target, {
+							duration,
+							ease: "circOut",
+							delay: index * baseStagger, // staggered start
+							onUpdate(latest) {
+								const value = decimals > 0 ? latest : Math.round(latest);
+								element.textContent = `${prefix}${formatter.format(value)}${suffix}`;
+							},
+						});
+					});
+				},
+				{
+					margin: "0px 0px -10% 0px", // trigger a bit earlier
+					once: true, // only fire once per trigger
+				}
+			);
+		});
 	}
 
 	hideShowNav();
