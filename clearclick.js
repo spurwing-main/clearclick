@@ -89,7 +89,7 @@ function main() {
 		const textElements = document.querySelectorAll(".anim-text-fade");
 		/* use GSAP split text to animate in word by word according to these specs: 
 
-        Text Fade on Scroll
+	Text Fade on Scroll
 Each text block fades in word-by-word as it enters view.
 Motion: opacity 0 → 1 with light stagger (~0.1–0.2s)
 Timing: ~0.6–0.8s per word/line, ease-in-out
@@ -185,8 +185,208 @@ Ref: Studio Everywhere / Releaf.bio
 		});
 	}
 
+	function latestCarousel() {
+		const mq = window.matchMedia("(max-width: 991px)");
+
+		const OPTIONS = {
+			align: "start",
+			containScroll: "trimSnaps",
+			loop: false,
+		};
+
+		const components = document.querySelectorAll(".c-latest");
+		if (!components.length) return;
+
+		components.forEach((component) => {
+			const emblaNode = component.querySelector(".latest_list-wrap.embla");
+			if (!emblaNode) return;
+
+			const viewportNode = emblaNode; // emblaNode IS the viewport in your markup
+			const dotsNode = component.querySelector(".latest_dots");
+			if (!dotsNode) return;
+
+			let emblaApi = null;
+			let dotNodes = [];
+
+			function buildDots() {
+				dotsNode.innerHTML = emblaApi
+					.scrollSnapList()
+					.map(
+						(_, index) => `<button class="latest_dot" type="button" data-index="${index}"></button>`
+					)
+					.join("");
+
+				dotNodes = Array.from(dotsNode.querySelectorAll(".latest_dot"));
+
+				dotNodes.forEach((dot) => {
+					dot.addEventListener("click", () => {
+						emblaApi.scrollTo(Number(dot.dataset.index));
+					});
+				});
+			}
+
+			function updateActiveDot() {
+				const selectedIndex = emblaApi.selectedScrollSnap();
+
+				dotNodes.forEach((dot, index) => {
+					dot.classList.toggle("latest_dot--selected", index === selectedIndex);
+				});
+			}
+
+			function init() {
+				if (emblaApi) return;
+
+				emblaApi = EmblaCarousel(viewportNode, OPTIONS);
+
+				emblaApi
+					.on("init", buildDots)
+					.on("reInit", buildDots)
+					.on("init", updateActiveDot)
+					.on("reInit", updateActiveDot)
+					.on("select", updateActiveDot);
+			}
+
+			function destroy() {
+				if (!emblaApi) return;
+
+				emblaApi.destroy();
+				emblaApi = null;
+
+				dotsNode.innerHTML = "";
+				dotNodes = [];
+			}
+
+			function breakpointCheck(e) {
+				if (e.matches) {
+					init(); // ≤ 991px
+				} else {
+					destroy(); // > 991px
+				}
+			}
+
+			// Initial run per component
+			breakpointCheck(mq);
+
+			// Listen once per component
+			mq.addEventListener("change", breakpointCheck);
+		});
+	}
+
+	function caseStudiesCarousel() {
+		const mainRoot = document.querySelector(".csc_list-wrapper.embla");
+		const thumbRoot = document.querySelector(".csc_logo-slider.embla");
+
+		if (!mainRoot || !thumbRoot) return;
+
+		const mainViewport = mainRoot;
+		const thumbViewport = thumbRoot;
+
+		const thumbContainer = thumbRoot.querySelector(".embla__container");
+		if (!thumbContainer) return;
+
+		// --- Embla options ---
+		const MAIN_OPTIONS = {
+			align: "start",
+			loop: false,
+			duration: 12,
+		};
+
+		const THUMB_OPTIONS = {
+			align: "center",
+			loop: false,
+			dragFree: true,
+			containScroll: "keepSnaps",
+			duration: 12,
+		};
+
+		// --- Init main Embla ---
+		const emblaMain = EmblaCarousel(mainViewport, MAIN_OPTIONS);
+
+		// --- Build thumb slides dynamically ---
+		function buildThumbs() {
+			thumbContainer.innerHTML = "";
+
+			const mainSlides = emblaMain.slideNodes();
+
+			mainSlides.forEach((slide, index) => {
+				const logoBtn = slide.querySelector(".csc_logo");
+				if (!logoBtn) return;
+
+				// Wrap logo button in a thumb slide
+				const thumbSlide = document.createElement("div");
+				thumbSlide.className = "csc_logo-slide embla__slide";
+				thumbSlide.dataset.index = index;
+
+				// Move (not clone) the button
+				thumbSlide.appendChild(logoBtn);
+
+				thumbContainer.appendChild(thumbSlide);
+			});
+		}
+
+		function updateThumbLayout() {
+			const viewportWidth = thumbViewport.clientWidth;
+			const trackWidth = thumbContainer.scrollWidth;
+
+			const hasOverflow = trackWidth > viewportWidth + 1;
+
+			const shouldCenter = !hasOverflow;
+
+			thumbRoot.classList.toggle("has-overflow", hasOverflow);
+			thumbRoot.classList.toggle("is-centered", shouldCenter);
+
+			if (shouldCenter) {
+				// Lock the carousel
+				emblaThumb.scrollTo(0, true);
+				emblaThumb.internalEngine().options.dragFree = false;
+			} else {
+				// Restore normal behaviour
+				emblaThumb.internalEngine().options.dragFree = true;
+			}
+		}
+
+		buildThumbs();
+
+		// --- Init thumb Embla AFTER DOM is built ---
+		const emblaThumb = EmblaCarousel(thumbViewport, THUMB_OPTIONS);
+
+		const thumbSlides = emblaThumb.slideNodes();
+
+		// --- Click thumbs → move main ---
+		thumbSlides.forEach((slide, index) => {
+			slide.addEventListener("click", () => {
+				emblaMain.scrollTo(index);
+			});
+		});
+
+		// --- Sync active state ---
+		function syncThumbs() {
+			const selected = emblaMain.selectedScrollSnap();
+
+			thumbSlides.forEach((slide, i) => {
+				slide.classList.toggle("is-active", i === selected);
+			});
+
+			if (!thumbRoot.classList.contains("is-centered")) {
+				emblaThumb.scrollTo(selected);
+			}
+		}
+
+		emblaMain.on("select", syncThumbs);
+		emblaThumb.on("init", syncThumbs);
+
+		// Initial sync
+		syncThumbs();
+
+		emblaThumb.on("init", updateThumbLayout);
+		emblaThumb.on("reInit", updateThumbLayout);
+		window.addEventListener("resize", updateThumbLayout);
+	}
+
 	hideShowNav();
 	logoStaggers();
+	latestCarousel();
+	caseStudiesCarousel();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
