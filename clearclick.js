@@ -383,10 +383,112 @@ Ref: Studio Everywhere / Releaf.bio
 		window.addEventListener("resize", updateThumbLayout);
 	}
 
+	function orbit() {
+		const component = document.querySelector(".c-orbit");
+		const cards = gsap.utils.toArray(".orbit-card");
+		const ring = document.querySelector(".orbit_ring-progress");
+		const pulse = document.querySelector(".orbit_ring-pulse");
+		cards.length;
+
+		gsap.set(cards, {
+			opacity: 0,
+		});
+
+		gsap.set(ring, {
+			drawSVG: "0%",
+			rotate: -90,
+			transformOrigin: "50% 50%",
+		});
+		gsap.set(pulse, {
+			opacity: 0,
+			transformOrigin: "50% 50%",
+		});
+
+		const tl = gsap.timeline({
+			scrollTrigger: {
+				trigger: ".process_main",
+				start: "top top",
+				end: () => `+=${cards.length * window.innerHeight * 0.5}`,
+				pin: true,
+				anticipatePin: 1,
+				scrub: true,
+			},
+		});
+
+		cards.forEach((card, i) => {
+			// Card in
+			tl.to(
+				card,
+				{
+					opacity: 1,
+					duration: 1.5,
+					ease: "power2.out",
+				},
+				">"
+			);
+
+			// tl.set(pulse, {
+			// 	scale: 1,
+			// 	opacity: 0.6,
+			// });
+
+			// Ring draw
+			tl.to(
+				ring,
+				{
+					drawSVG: `${((i + 1) / cards.length) * 100}%`,
+					duration: 1.5,
+					ease: "none",
+				},
+				"<"
+			);
+			// tl.to(
+			// 	ring,
+			// 	{
+			// 		opacity: 0,
+			// 		scale: 1.15,
+			// 		duration: 0.4,
+			// 	},
+			// 	">0.2"
+			// );
+
+			// tl.fromTo(
+			// 	pulse,
+			// 	{
+			// 		scale: 1,
+			// 		// opacity: 0.6,
+			// 	},
+			// 	{
+			// 		scale: 1.15,
+			// 		opacity: 0,
+			// 		duration: 0.4,
+			// 		ease: "power2.out",
+			// 	}
+			// );
+		});
+
+		const tlPulse = gsap.timeline({
+			// little timeline for pulse that's independent of scroll and called once when main tl completes
+			paused: true,
+		});
+
+		tlPulse.to(ring, {
+			scale: 1.3,
+			opacity: 0,
+			duration: 0.4,
+			ease: "power2.out",
+		});
+
+		tl.eventCallback("onComplete", () => {
+			tlPulse.restart();
+		});
+	}
+
 	hideShowNav();
 	logoStaggers();
 	latestCarousel();
 	caseStudiesCarousel();
+	orbit();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
