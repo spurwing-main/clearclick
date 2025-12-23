@@ -470,6 +470,13 @@ Ref: Studio Everywhere / Releaf.bio
 		const tlPulse = gsap.timeline({
 			// little timeline for pulse that's independent of scroll and called once when main tl completes
 			paused: true,
+			onComplete: () => {
+				gsap.set(ring, {
+					scale: 1,
+					opacity: 1,
+					drawSVG: "0%",
+				});
+			},
 		});
 
 		tlPulse.to(ring, {
