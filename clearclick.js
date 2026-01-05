@@ -384,111 +384,457 @@ Ref: Studio Everywhere / Releaf.bio
 	}
 
 	function orbit() {
-		const component = document.querySelector(".c-orbit");
+		const component = document.querySelector(".c-process");
+		if (!component) return;
+
+		const triggerEl = component.querySelector(".process_main");
+
+		const orbitEl = component.querySelector(".c-orbit");
+
 		const cards = gsap.utils.toArray(".orbit-card");
 		const ring = document.querySelector(".orbit_ring-progress");
 		const pulse = document.querySelector(".orbit_ring-pulse");
-		cards.length;
 
-		gsap.set(cards, {
-			opacity: 0,
+		const track = component.querySelector(".orbit_cards");
+
+		// kill existing ScrollTriggers on this trigger
+		ScrollTrigger.getAll().forEach((st) => {
+			if (st.trigger === triggerEl) st.kill();
 		});
+		gsap.killTweensOf([cards, ring, pulse, track]);
 
-		gsap.set(ring, {
-			drawSVG: "0%",
-			rotate: -90,
-			transformOrigin: "50% 50%",
-		});
-		gsap.set(pulse, {
-			opacity: 0,
-			transformOrigin: "50% 50%",
-		});
-
-		const tl = gsap.timeline({
-			scrollTrigger: {
-				trigger: ".process_main",
-				start: "top top",
-				end: () => `+=${cards.length * window.innerHeight * 0.5}`,
-				pin: true,
-				anticipatePin: 1,
-				scrub: true,
-			},
-		});
-
-		cards.forEach((card, i) => {
-			// Card in
-			tl.to(
-				card,
-				{
-					opacity: 1,
-					duration: 1.5,
-					ease: "power2.out",
-				},
-				">"
-			);
-
-			// tl.set(pulse, {
-			// 	scale: 1,
-			// 	opacity: 0.6,
-			// });
-
-			// Ring draw
-			tl.to(
-				ring,
-				{
-					drawSVG: `${((i + 1) / cards.length) * 100}%`,
-					duration: 1.5,
-					ease: "none",
-				},
-				"<"
-			);
-			// tl.to(
-			// 	ring,
-			// 	{
-			// 		opacity: 0,
-			// 		scale: 1.15,
-			// 		duration: 0.4,
-			// 	},
-			// 	">0.2"
-			// );
-
-			// tl.fromTo(
-			// 	pulse,
-			// 	{
-			// 		scale: 1,
-			// 		// opacity: 0.6,
-			// 	},
-			// 	{
-			// 		scale: 1.15,
-			// 		opacity: 0,
-			// 		duration: 0.4,
-			// 		ease: "power2.out",
-			// 	}
-			// );
-		});
-
-		const tlPulse = gsap.timeline({
-			// little timeline for pulse that's independent of scroll and called once when main tl completes
-			paused: true,
-			onComplete: () => {
-				gsap.set(ring, {
-					scale: 1,
-					opacity: 1,
-					drawSVG: "0%",
+		ScrollTrigger.matchMedia({
+			// Only run the pinned desktop orbit when the viewport is tall enough
+			"(min-width: 992px) and (min-height: 960px)": () => {
+				gsap.set(cards, {
+					opacity: 0,
 				});
+
+				gsap.set(ring, {
+					drawSVG: "0%",
+					rotate: -90,
+					transformOrigin: "50% 50%",
+				});
+				gsap.set(pulse, {
+					opacity: 0,
+					transformOrigin: "50% 50%",
+				});
+
+				const tl = gsap.timeline({
+					scrollTrigger: {
+						trigger: triggerEl,
+						start: "top top",
+						end: () => `+=${cards.length * window.innerHeight * 0.5}`,
+						pin: true,
+						anticipatePin: 1,
+						scrub: 1,
+					},
+				});
+
+				cards.forEach((card, i) => {
+					// Card in
+					tl.to(
+						card,
+						{
+							opacity: 1,
+							duration: 1.5,
+							ease: "power2.out",
+						},
+						">"
+					);
+
+					// Ring draw
+					tl.to(
+						ring,
+						{
+							drawSVG: `${((i + 1) / cards.length) * 100}%`,
+							duration: 1.5,
+							ease: "none",
+						},
+						"<"
+					);
+				});
+
+				const tlPulse = gsap.timeline({
+					// little timeline for pulse that's independent of scroll and called once when main tl completes
+					paused: true,
+					onComplete: () => {
+						gsap.set(ring, {
+							scale: 1,
+							opacity: 1,
+							drawSVG: "0%",
+						});
+					},
+				});
+
+				tlPulse.to(ring, {
+					scale: 1.3,
+					opacity: 0,
+					duration: 0.4,
+					ease: "power2.out",
+				});
+
+				tl.eventCallback("onComplete", () => {
+					tlPulse.restart();
+				});
+
+				return () => {
+					tl.scrollTrigger?.kill();
+					tl.kill();
+					tlPulse.kill();
+				};
+			},
+
+			// Desktop width, but short height: avoid pin/cropping and show content normally
+			"(min-width: 992px) and (max-height: 959px)": () => {
+				// Ensure everything is visible and not mid-animation if the user resized into this state
+				gsap.killTweensOf([cards, ring, pulse, track]);
+				gsap.set(cards, { opacity: 1, clearProps: "transform" });
+				gsap.set(track, { clearProps: "transform" });
+				gsap.set(ring, {
+					rotate: -90,
+					transformOrigin: "50% 50%",
+					drawSVG: "100%",
+					clearProps: "scale,opacity",
+				});
+				gsap.set(pulse, { opacity: 0, clearProps: "transform" });
+
+				// No ScrollTrigger/pinning in this mode
+				return () => {
+					// leaving this mode: let other modes fully control styles
+					gsap.killTweensOf([cards, ring, pulse, track]);
+				};
+			},
+
+			"(max-width: 991px)": () => {
+				gsap.set(cards, {
+					opacity: 1,
+				});
+				gsap.set(ring, {
+					drawSVG: "0%",
+					rotate: -90,
+					transformOrigin: "50% 50%",
+				});
+				gsap.set(pulse, {
+					opacity: 0,
+					transformOrigin: "50% 50%",
+				});
+
+				const getMaxX = () => {
+					const trackRect = track.getBoundingClientRect();
+					const containerRect = orbitEl.getBoundingClientRect();
+					const overflow = track.scrollWidth - containerRect.width;
+					return overflow > 0 ? -overflow : 0;
+				};
+
+				const tl = gsap.timeline({
+					scrollTrigger: {
+						trigger: triggerEl,
+						start: "top top",
+						end: () => `+=${cards.length * window.innerHeight * 0.5}`,
+						pin: true,
+						anticipatePin: 1,
+						scrub: 1,
+					},
+				});
+
+				tl.to(track, {
+					x: () => getMaxX(),
+					duration: 1,
+					ease: "none",
+				});
+
+				tl.to(
+					ring,
+					{
+						drawSVG: "100%",
+						duration: 1,
+						ease: "none",
+					},
+					"0"
+				);
+
+				const tlPulse = gsap.timeline({
+					// little timeline for pulse that's independent of scroll and called once when main tl completes
+					paused: true,
+					onComplete: () => {
+						gsap.set(ring, {
+							scale: 1,
+							opacity: 1,
+							drawSVG: "0%",
+						});
+					},
+				});
+
+				tlPulse.to(ring, {
+					scale: 1.3,
+					opacity: 0,
+					duration: 0.4,
+					ease: "power2.out",
+				});
+
+				tl.eventCallback("onComplete", () => {
+					tlPulse.restart();
+				});
+
+				return () => {
+					tl.scrollTrigger?.kill();
+					tl.kill();
+					tlPulse.kill();
+				};
 			},
 		});
+	}
 
-		tlPulse.to(ring, {
-			scale: 1.3,
-			opacity: 0,
-			duration: 0.4,
-			ease: "power2.out",
+	// --------- tiny helpers ----------
+	function debounce(fn, wait = 100) {
+		let t;
+		return (...args) => {
+			clearTimeout(t);
+			t = setTimeout(() => fn(...args), wait);
+		};
+	}
+
+	function getPanes(tabsEl) {
+		return Array.from(tabsEl.querySelectorAll(".w-tab-pane, .tabs_tab-pane"));
+	}
+
+	// --------- your existing animation builder ----------
+	function buildPaneTimeline(pane) {
+		const header = pane.querySelector(".tab-pane_header");
+		const subtitle = pane.querySelector(".tab-pane_subtitle");
+		const body = pane.querySelector(".tab-pane_body");
+		const footer = pane.querySelector(".tab-pane_footer");
+		const services = pane.querySelector(".tab-pane_services");
+		if (!header || !subtitle || !body || !footer || !services) return null;
+
+		const svg = pane.querySelector(".tab-services_graphic");
+		if (!svg) return null;
+
+		const ringA = svg.querySelector(".tab-services-ring-a");
+		const ringB = svg.querySelector(".tab-services-ring-b");
+		const ringC = svg.querySelector(".tab-services-ring-c");
+		if (!ringA || !ringB || !ringC) return null;
+
+		// Reset state each time so replay is consistent
+		gsap.set([ringA, ringB, ringC], { opacity: 0, scale: 0.85 });
+		gsap.set([header, subtitle, body, footer, services], { autoAlpha: 0, y: 20 });
+
+		const tl = gsap.timeline(
+			(onComplete = () => {
+				console.log("Pane animation complete");
+			})
+		);
+		tl.to(header, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" });
+		tl.to(subtitle, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
+		tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
+		tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
+		tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
+		tl.to(
+			[ringC, ringB, ringA],
+			{
+				opacity: 1,
+				scale: 1,
+				duration: 1,
+				ease: "power2.out",
+				stagger: 0.5,
+				overwrite: "auto",
+			},
+			"<"
+		);
+		return tl;
+	}
+
+	function playPane(pane) {
+		pane._tl?.kill();
+		pane._tl = buildPaneTimeline(pane);
+		pane._tl?.play(0);
+	}
+
+	function getTabLinks(tabsEl) {
+		return Array.from(tabsEl.querySelectorAll(".w-tab-menu .w-tab-link"));
+	}
+
+	function findPaneByTabName(tabsEl, tabName) {
+		if (!tabName) return null;
+		// Webflow panes carry data-w-tab too
+		return tabsEl.querySelector(`.w-tab-content .w-tab-pane[data-w-tab="${CSS.escape(tabName)}"]`);
+	}
+
+	function playByLink(tabsEl, linkEl) {
+		if (!linkEl) return;
+
+		const tabName = linkEl.getAttribute("data-w-tab");
+		const pane = findPaneByTabName(tabsEl, tabName);
+		if (pane) playPane(pane);
+	}
+
+	function initTabsForComponent(tabsEl) {
+		if (!tabsEl || tabsEl._ccTabsBound) return;
+		tabsEl._ccTabsBound = true;
+
+		// play once on init: use current tab link (reliable)
+		const currentLink = tabsEl.querySelector(".w-tab-menu .w-tab-link.w--current");
+		if (currentLink) playByLink(tabsEl, currentLink);
+
+		// click-based activation: use clicked link's data-w-tab (no waiting for w--tab-active)
+		tabsEl.addEventListener("click", (e) => {
+			const link = e.target.closest(".w-tab-menu .w-tab-link");
+			if (!link || !tabsEl.contains(link)) return;
+			playByLink(tabsEl, link);
 		});
 
-		tl.eventCallback("onComplete", () => {
-			tlPulse.restart();
+		// keyboard activation (Enter/Space) on focused link
+		tabsEl.addEventListener("keydown", (e) => {
+			if (e.key !== "Enter" && e.key !== " ") return;
+			const link = e.target.closest(".w-tab-menu .w-tab-link");
+			if (!link || !tabsEl.contains(link)) return;
+			playByLink(tabsEl, link);
 		});
+	}
+
+	// --------- mobile accordion ----------
+	const mq = window.matchMedia("(max-width: 767px)");
+	let mqBound = false;
+
+	function initAccordion(component) {
+		if (!component._headerClickHandlers) component._headerClickHandlers = new Map();
+
+		const panes = getPanes(component);
+		panes.forEach((pane) => {
+			const header = pane.querySelector(".tab-pane_mbl-header");
+			const inner = pane.querySelector(".tab-pane_inner");
+			const icon = pane.querySelector(".tab-pane_accordion-icon");
+			if (!header || !inner || !icon) return;
+
+			if (header.dataset.accordionBound === "true") return;
+
+			// Start collapsed
+			gsap.set(inner, { height: 0, overflow: "hidden" });
+			gsap.set(icon, { rotation: 0 });
+
+			const tl = gsap.timeline({ paused: true });
+			tl.to(inner, { height: "auto", duration: 0.5, ease: "power2.inOut" });
+			tl.to(icon, { rotation: 180, duration: 0.5, ease: "power2.inOut" }, "<");
+			pane._accordionTl = tl;
+
+			const onHeaderClick = () => {
+				const isOpen = pane.classList.contains("is-open");
+
+				// close others
+				panes.forEach((other) => {
+					if (other === pane) return;
+					other.classList.remove("is-open");
+					other._accordionTl?.reverse();
+				});
+
+				if (isOpen) {
+					pane.classList.remove("is-open");
+					tl.reverse();
+				} else {
+					pane.classList.add("is-open");
+					tl.play(0);
+					// ALSO trigger your pane animation on open
+					playPane(pane);
+				}
+			};
+
+			component._headerClickHandlers.set(header, onHeaderClick);
+			header.dataset.accordionBound = "true";
+			header.addEventListener("click", onHeaderClick);
+		});
+	}
+
+	function destroyAccordion(component) {
+		const panes = getPanes(component);
+
+		panes.forEach((pane) => {
+			const header = pane.querySelector(".tab-pane_mbl-header");
+			const inner = pane.querySelector(".tab-pane_inner");
+			const icon = pane.querySelector(".tab-pane_accordion-icon");
+
+			if (header && header.dataset.accordionBound === "true") {
+				const handler = component._headerClickHandlers?.get(header);
+				if (handler) header.removeEventListener("click", handler);
+				component._headerClickHandlers?.delete(header);
+				header.removeAttribute("data-accordion-bound");
+			}
+
+			pane.classList.remove("is-open");
+
+			if (pane._accordionTl) {
+				pane._accordionTl.kill();
+				delete pane._accordionTl;
+			}
+
+			if (inner) {
+				gsap.killTweensOf(inner);
+				gsap.set(inner, { clearProps: "height,overflow" });
+			}
+
+			if (icon) {
+				gsap.killTweensOf(icon);
+				gsap.set(icon, { clearProps: "transform" });
+			}
+		});
+	}
+
+	function applyAccordionState() {
+		const components = document.querySelectorAll(".c-tabs .tabs_tabs");
+		if (!components.length) return;
+
+		if (mq.matches) {
+			components.forEach(initAccordion);
+		} else {
+			components.forEach(destroyAccordion);
+		}
+
+		if (!mqBound) {
+			mqBound = true;
+			mq.addEventListener("change", applyAccordionState);
+		}
+	}
+
+	// --------- master init ----------
+	function initAllTabs() {
+		document.querySelectorAll(".c-tabs .tabs_tabs").forEach((tabsEl) => {
+			initTabsForComponent(tabsEl);
+		});
+
+		applyAccordionState();
+	}
+
+	// --------- Finsweet hook: rerun init on FS render  ----------
+	function hookFinsweetRenders() {
+		window.FinsweetAttributes ||= [];
+		window.FinsweetAttributes.push([
+			"list",
+			(listInstances) => {
+				listInstances.forEach((inst) => {
+					if (inst.__ccTabsHooked) return;
+					inst.__ccTabsHooked = true;
+
+					// v2-style hook (commonly used by FS list solutions)
+					if (typeof inst.addHook === "function") {
+						inst.addHook(
+							"afterRender",
+							debounce(() => initAllTabs(), 0)
+						);
+					}
+
+					// if the instance exposes an event emitter style API, support that too
+					if (typeof inst.on === "function") {
+						inst.on(
+							"renderitems",
+							debounce(() => initAllTabs(), 0)
+						);
+					}
+				});
+
+				// run once when FS list is ready
+				initAllTabs();
+			},
+		]);
 	}
 
 	hideShowNav();
@@ -503,4 +849,7 @@ Ref: Studio Everywhere / Releaf.bio
 		animTextFadeIn();
 		initMotionCounters();
 	});
+
+	hookFinsweetRenders();
+	initAllTabs();
 }
