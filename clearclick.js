@@ -606,7 +606,7 @@ Ref: Studio Everywhere / Releaf.bio
 		const body = pane.querySelector(".tab-pane_body");
 		const footer = pane.querySelector(".tab-pane_footer");
 		const services = pane.querySelector(".tab-pane_services");
-		if (!header || !subtitle || !body || !footer || !services) return null;
+		// if (!header || !subtitle || !body || !footer || !services) return null;
 
 		const svg = pane.querySelector(".tab-services_graphic");
 		if (!svg) return null;
@@ -837,7 +837,413 @@ Ref: Studio Everywhere / Releaf.bio
 		]);
 	}
 
+	function navDropdowns() {
+		if (typeof gsap === "undefined") {
+			console.warn("[clearclick] GSAP not found, skipping navDropdowns()");
+			return;
+		}
+
+		const dropdowns = Array.from(document.querySelectorAll(".nav_dd"));
+		if (!dropdowns.length) return;
+
+		// Kill previous init if this gets called more than once (e.g. Webflow/FS rerenders)
+		if (navDropdowns._mm) {
+			navDropdowns._mm.kill();
+			navDropdowns._mm = null;
+		}
+
+		// Convenience: close all dropdowns (optionally except one)
+		function closeAll(exceptEl = null) {
+			dropdowns.forEach((dd) => {
+				if (exceptEl && dd === exceptEl) return;
+				dd.classList.remove("is-open");
+
+				const data = dd._ccNavDd;
+				if (data?.tl) data.tl.reverse();
+			});
+		}
+
+		// Helper to remove listeners we attach
+		function addListener(el, type, handler, store) {
+			el.addEventListener(type, handler);
+			store.push(() => el.removeEventListener(type, handler));
+		}
+
+		const mm = gsap.matchMedia();
+		navDropdowns._mm = mm;
+
+		// -------------------------
+		// Desktop: hover (> 991)
+		// -------------------------
+		mm.add("(min-width: 992px)", () => {
+			const unsubs = [];
+
+			dropdowns.forEach((dd) => {
+				const list = dd.querySelector(".nav_dd-list");
+				const mmPanel = dd.querySelector(".c-mm");
+				const links = Array.from(dd.querySelectorAll(".mm_link"));
+
+				if (!list || !mmPanel) return;
+
+				// kill any prior timeline
+				if (dd._ccNavDd?.tl) dd._ccNavDd.tl.kill();
+
+				// Closed baseline
+				gsap.set(list, { display: "none" });
+				gsap.set(mmPanel, { backgroundColor: "transparent" });
+				if (links.length) gsap.set(links, { autoAlpha: 0 });
+
+				const tl = gsap.timeline({
+					paused: true,
+					defaults: { ease: "power1.out" },
+					onReverseComplete: () => {
+						gsap.set(list, { display: "none" });
+					},
+				});
+
+				// Open: ensure list is visible, then animate bg + links
+				tl.set(list, { display: "block" }, 0);
+				tl.to(
+					mmPanel,
+					{
+						backgroundColor: "#ffffff",
+						duration: 0.29,
+					},
+					0.01
+				);
+				if (links.length) {
+					tl.to(
+						links,
+						{
+							autoAlpha: 1,
+							duration: 0.2,
+							stagger: 0.05,
+						},
+						0.05
+					);
+				}
+
+				// store per-dd
+				dd._ccNavDd = { tl, mode: "desktop" };
+
+				const onEnter = () => {
+					closeAll(dd);
+					dd.classList.add("is-open");
+					tl.play(0);
+				};
+
+				const onLeave = () => {
+					dd.classList.remove("is-open");
+					tl.reverse();
+				};
+
+				addListener(dd, "pointerenter", onEnter, unsubs);
+				addListener(dd, "pointerleave", onLeave, unsubs);
+			});
+
+			// Cleanup when leaving desktop MQ
+			return () => {
+				unsubs.forEach((fn) => fn());
+				dropdowns.forEach((dd) => {
+					dd.classList.remove("is-open");
+					if (dd._ccNavDd?.mode === "desktop") {
+						dd._ccNavDd.tl?.kill();
+						delete dd._ccNavDd;
+					}
+				});
+			};
+		});
+
+		// -------------------------
+		// Mobile: click (<= 991)
+		// -------------------------
+		mm.add("(max-width: 991px)", () => {
+			const unsubs = [];
+
+			dropdowns.forEach((dd) => {
+				const toggle = dd.querySelector(".nav_dd-toggle") || dd;
+				const list = dd.querySelector(".nav_dd-list");
+				const links = Array.from(dd.querySelectorAll(".mm_link"));
+				const svg = dd.querySelector(".nav_dd-toggle svg");
+
+				if (!list) return;
+
+				// kill any prior timeline
+				if (dd._ccNavDd?.tl) dd._ccNavDd.tl.kill();
+
+				// Closed baseline (mobile)
+				gsap.set(list, { height: 0, overflow: "hidden" });
+				gsap.set(dd, { backgroundColor: "transparent" });
+				if (svg) gsap.set(svg, { rotation: 90, transformOrigin: "50% 50%" });
+				if (links.length) gsap.set(links, { autoAlpha: 0 });
+
+				const tl = gsap.timeline({
+					paused: true,
+					defaults: { ease: "power2.inOut" },
+				});
+
+				// Open mobile spec:
+				// - list height 0 -> auto
+				// - bg dd transparent -> #dadff6
+				// - rotate svg 90 -> 270
+				// - stagger links in (same as desktop)
+				tl.to(
+					list,
+					{
+						height: "auto",
+						duration: 0.5,
+					},
+					0
+				);
+				tl.to(
+					dd,
+					{
+						backgroundColor: "#dadff6",
+						duration: 0.29,
+						ease: "power1.out",
+					},
+					0
+				);
+				if (svg) {
+					tl.to(
+						svg,
+						{
+							rotation: 270,
+							duration: 0.29,
+							ease: "power1.out",
+						},
+						0
+					);
+				}
+				if (links.length) {
+					tl.to(
+						links,
+						{
+							autoAlpha: 1,
+							duration: 0.2,
+							stagger: 0.05,
+							ease: "power1.out",
+						},
+						0.05
+					);
+				}
+
+				dd._ccNavDd = { tl, mode: "mobile" };
+
+				const onClick = (e) => {
+					// If your toggle is an <a>, stop it jumping
+					if (toggle.tagName === "A") e.preventDefault();
+
+					const isOpen = dd.classList.contains("is-open");
+
+					if (isOpen) {
+						dd.classList.remove("is-open");
+						tl.reverse();
+					} else {
+						closeAll(dd);
+						dd.classList.add("is-open");
+						tl.play(0);
+					}
+				};
+
+				addListener(toggle, "click", onClick, unsubs);
+			});
+
+			// Clicking mobile nav button should close all dropdowns
+			document.querySelectorAll(".nav_mobile-btn").forEach((btn) => {
+				const onBtn = () => closeAll();
+				addListener(btn, "click", onBtn, unsubs);
+			});
+
+			// Cleanup when leaving mobile MQ
+			return () => {
+				unsubs.forEach((fn) => fn());
+				dropdowns.forEach((dd) => {
+					dd.classList.remove("is-open");
+					if (dd._ccNavDd?.mode === "mobile") {
+						dd._ccNavDd.tl?.kill();
+						delete dd._ccNavDd;
+					}
+					// Clear inline styles we set (optional, but keeps desktop clean)
+					gsap.set(dd, { clearProps: "backgroundColor" });
+					const list = dd.querySelector(".nav_dd-list");
+					if (list) gsap.set(list, { clearProps: "height,overflow,display" });
+					const svg = dd.querySelector(".nav_dd-toggle svg");
+					if (svg) gsap.set(svg, { clearProps: "transform" });
+					const links = dd.querySelectorAll(".mm_link");
+					if (links.length) gsap.set(links, { clearProps: "opacity,visibility" });
+					const mmPanel = dd.querySelector(".c-mm");
+					if (mmPanel) gsap.set(mmPanel, { clearProps: "backgroundColor" });
+				});
+			};
+		});
+	}
+
+	function openNav() {
+		if (typeof gsap === "undefined") {
+			console.warn("[clearclick] GSAP not found, skipping openNav()");
+			return;
+		}
+
+		const menuWrap = document.querySelector(".nav_menu-wrap");
+		const menu = document.querySelector(".nav_menu");
+		const bg = document.querySelector(".nav_menu-bg");
+		const list = document.querySelector(".nav_menu-list");
+		const ctaWrap = document.querySelector(".nav_menu-btn-wrap");
+		const buttons = Array.from(document.querySelectorAll(".nav_mobile-btn"));
+		const logo = document.querySelector(".nav .logo");
+
+		if (!menu || !bg || !list || !buttons.length) return;
+
+		// Kill previous init if this gets called more than once
+		if (openNav._mm) {
+			openNav._mm.kill();
+			openNav._mm = null;
+		}
+
+		function addListener(el, type, handler, store) {
+			el.addEventListener(type, handler);
+			store.push(() => el.removeEventListener(type, handler));
+		}
+
+		function setButtonIcon(btn, isOpen) {
+			const svg_open = btn.querySelector(".nav_mobile-btn-svg.is-cross"); // svg when nav is open
+			const svg_closed = btn.querySelector(".nav_mobile-btn-svg.is-hamburger"); // svg when nav is closed
+
+			if (!svg_open || !svg_closed) return;
+
+			gsap.to(svg_open, { duration: 0.2, autoAlpha: isOpen ? 1 : 0 });
+			gsap.to(svg_closed, { duration: 0.2, autoAlpha: isOpen ? 0 : 1 });
+		}
+
+		const items = [
+			...Array.from(list.children).filter(
+				(el) => el && (el.tagName === "A" || el.tagName === "DIV")
+			),
+			...(ctaWrap ? [ctaWrap] : []),
+		];
+
+		function setOpenState(isOpen) {
+			menu.classList.toggle("is-open", isOpen);
+			document.documentElement.classList.toggle("nav-open", isOpen);
+			document.body.classList.toggle("nav-open", isOpen);
+			buttons.forEach((b) => setButtonIcon(b, isOpen));
+
+			if (isOpen) {
+				lockedScrollY = window.scrollY;
+				document.body.style.position = "fixed";
+				document.body.style.top = `-${lockedScrollY}px`;
+				document.body.style.left = "0";
+				document.body.style.right = "0";
+			} else {
+				document.body.style.position = "";
+				document.body.style.top = "";
+				document.body.style.left = "";
+				document.body.style.right = "";
+				window.scrollTo(0, lockedScrollY);
+			}
+		}
+
+		const mm = gsap.matchMedia();
+		openNav._mm = mm;
+
+		// Mobile only
+		mm.add("(max-width: 991px)", () => {
+			const unsubs = [];
+
+			// baseline (closed)
+			gsap.set(menuWrap, { display: "none" });
+			gsap.set(bg, { autoAlpha: 0, scaleY: 0.5, transformOrigin: "50% 0%" });
+			if (items.length) gsap.set(items, { autoAlpha: 0 });
+
+			const tl = gsap.timeline({
+				paused: true,
+				defaults: { ease: "power2.out" },
+				onReverseComplete: () => {
+					gsap.set(menuWrap, { display: "none" });
+					setOpenState(false);
+				},
+			});
+
+			// OPEN:
+			// - menu display flex
+			// - bg opacity 0 -> 1 and scaleY 0.5 -> 1
+			// - stagger in immediate <a>/<div> children of .nav_menu-list + .nav_menu-btn-wrap
+			tl.set(menuWrap, { display: "flex" }, 0);
+			tl.to(
+				bg,
+				{
+					autoAlpha: 1,
+					scaleY: 1,
+					duration: 0.35, // tweakable
+					ease: "power2.out",
+				},
+				0
+			);
+
+			tl.to(
+				logo,
+				{
+					color: "var(--_color---blue--dark)",
+					duration: 0.2,
+					ease: "power1.out",
+				},
+				0
+			);
+
+			if (items.length) {
+				tl.to(
+					items,
+					{
+						autoAlpha: 1,
+						duration: 0.2,
+						stagger: 0.05,
+						ease: "power1.out",
+					},
+					0.05
+				);
+			}
+
+			function open() {
+				setOpenState(true);
+				tl.play(0);
+			}
+
+			function close() {
+				tl.reverse();
+			}
+
+			function toggle() {
+				const isOpen = menu.classList.contains("is-open");
+				if (isOpen) close();
+				else open();
+			}
+
+			buttons.forEach((btn) => {
+				const onBtnClick = (e) => {
+					// if it's an <a> styled as button
+					if (btn.tagName === "A") e.preventDefault();
+					toggle();
+				};
+				addListener(btn, "click", onBtnClick, unsubs);
+			});
+
+			// Cleanup leaving mobile
+			return () => {
+				unsubs.forEach((fn) => fn());
+				tl.kill();
+
+				setOpenState(false);
+				gsap.set(menuWrap, { clearProps: "display" });
+				gsap.set(bg, { clearProps: "opacity,visibility,transform" });
+				if (items.length) gsap.set(items, { clearProps: "opacity,visibility" });
+			};
+		});
+	}
+
 	hideShowNav();
+	openNav();
+	navDropdowns();
 	logoStaggers();
 	latestCarousel();
 	caseStudiesCarousel();
