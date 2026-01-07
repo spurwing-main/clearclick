@@ -818,7 +818,10 @@ Ref: Studio Everywhere / Releaf.bio
 					if (typeof inst.addHook === "function") {
 						inst.addHook(
 							"afterRender",
-							debounce(() => initAllTabs(), 0)
+							debounce(() => {
+								initAllTabs();
+								initScrollReveals();
+							}, 0)
 						);
 					}
 
@@ -826,15 +829,80 @@ Ref: Studio Everywhere / Releaf.bio
 					if (typeof inst.on === "function") {
 						inst.on(
 							"renderitems",
-							debounce(() => initAllTabs(), 0)
+							debounce(() => {
+								initAllTabs();
+								initScrollReveals();
+							}, 0)
 						);
 					}
 				});
 
 				// run once when FS list is ready
 				initAllTabs();
+				initScrollReveals();
 			},
 		]);
+	}
+
+	// Apply the buildPaneTimeline “feel” to arbitrary sections on scroll.
+	// Usage:
+	// <section class="cc-reveal"> ... <h2 class="cc-reveal-item">...</h2> ... </section>
+	function initScrollReveals() {
+		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
+			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping initScrollReveals()");
+			return;
+		}
+
+		const groups = Array.from(document.querySelectorAll(".cc-reveal"));
+		if (!groups.length) return;
+
+		groups.forEach((group) => {
+			if (group._ccRevealBound) return;
+			group._ccRevealBound = true;
+
+			const items = Array.from(group.querySelectorAll(".cc-reveal-item"));
+			if (!items.length) return;
+
+			// Config via data-attrs (optional)
+			const y =
+				parseFloat(group.getAttribute("data-cc-reveal-y") || "") ||
+				parseFloat(getComputedStyle(group).getPropertyValue("--cc-reveal-y") || "") ||
+				20;
+
+			const duration =
+				parseFloat(group.getAttribute("data-cc-reveal-duration") || "") ||
+				parseFloat(getComputedStyle(group).getPropertyValue("--cc-reveal-duration") || "") ||
+				0.8;
+
+			const staggerAmt =
+				parseFloat(group.getAttribute("data-cc-reveal-stagger") || "") ||
+				parseFloat(getComputedStyle(group).getPropertyValue("--cc-reveal-stagger") || "") ||
+				0.12;
+
+			const start = group.getAttribute("data-cc-reveal-start") || "top 75%";
+			const once = (group.getAttribute("data-cc-reveal-once") || "true") !== "false";
+
+			// Baseline (hidden)
+			gsap.set(items, { autoAlpha: 0, y });
+
+			const tl = gsap.timeline({ paused: true });
+			tl.to(items, {
+				autoAlpha: 1,
+				y: 0,
+				duration,
+				ease: "power2.out",
+				stagger: staggerAmt,
+				overwrite: "auto",
+				clearProps: "transform",
+			});
+
+			ScrollTrigger.create({
+				trigger: group,
+				start,
+				once,
+				onEnter: () => tl.play(0),
+			});
+		});
 	}
 
 	function navDropdowns() {
@@ -1123,6 +1191,8 @@ Ref: Studio Everywhere / Releaf.bio
 			...(ctaWrap ? [ctaWrap] : []),
 		];
 
+		let lockedScrollY = 0;
+
 		function setOpenState(isOpen) {
 			menu.classList.toggle("is-open", isOpen);
 			document.documentElement.classList.toggle("nav-open", isOpen);
@@ -1248,6 +1318,7 @@ Ref: Studio Everywhere / Releaf.bio
 	latestCarousel();
 	caseStudiesCarousel();
 	orbit();
+	initScrollReveals();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
