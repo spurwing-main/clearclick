@@ -885,30 +885,36 @@ Ref: Studio Everywhere / Releaf.bio
 			// Baseline (hidden)
 			gsap.set(items, { autoAlpha: 0, y });
 
-			function dispatchCountUpForItem(item) {
-				// Find MotionCountUp inside this reveal item
+			function fireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
+				const start = performance.now();
+
+				const fire = () => {
+					window.dispatchEvent(new CustomEvent(eventName, { detail }));
+				};
+
+				// immediate + next frame
+				fire();
+				requestAnimationFrame(fire);
+
+				// keep trying for a bit (covers slow React mount)
+				const timer = setInterval(() => {
+					fire();
+					if (performance.now() - start >= maxMs) clearInterval(timer);
+				}, intervalMs);
+			}
+
+			function dispatchCountUpForItem(item, group) {
 				const el = item.querySelector("[data-motion-countup-event]");
-				if (!el) return;
-
-				console.log("Dispatching countup event for", el);
-
-				const eventName = el.getAttribute("data-motion-countup-event");
+				const eventName = el?.getAttribute("data-motion-countup-event")?.trim();
 				if (!eventName) return;
 
-				window.dispatchEvent(
-					new CustomEvent(eventName, {
-						detail: { trigger: group, item },
-					})
-				);
+				fireEventWithRetry(eventName, { trigger: group, item });
 			}
 
 			const tl = gsap.timeline({ paused: true });
 
 			items.forEach((item, i) => {
 				const t = i * staggerAmt;
-
-				// Start the countup exactly when this item starts animating in
-				tl.call(() => dispatchCountUpForItem(item), null, t);
 
 				tl.to(
 					item,
@@ -919,6 +925,7 @@ Ref: Studio Everywhere / Releaf.bio
 						ease: "power2.out",
 						overwrite: "auto",
 						clearProps: "transform",
+						onStart: () => dispatchCountUpForItem(item, group),
 					},
 					t
 				);
@@ -928,7 +935,7 @@ Ref: Studio Everywhere / Releaf.bio
 				trigger: group,
 				start,
 				once,
-				onEnter: () => tl.play(0),
+				onEnter: () => requestAnimationFrame(() => tl.play(0)),
 			});
 		});
 	}
