@@ -7,6 +7,34 @@ function main() {
 
 	const { animate, inView, stagger } = MotionGlobal || {};
 
+	function homeHeroCorners() {
+		// on scroll, animate bottom corner radius of .c-home-hero from 0 to 3rem
+		const hero = document.querySelector(".c-home-hero");
+		if (!hero) return;
+		gsap.to(
+			hero,
+			// {
+			// 	borderBottomLeftRadius: "0rem",
+			// 	borderBottomRightRadius: "0rem",
+			// },
+			{
+				borderBottomLeftRadius: "3rem",
+				borderBottomRightRadius: "3rem",
+				scrollTrigger: {
+					trigger: hero,
+					start: "top top",
+					// end should be after scrolling a fixed amount
+					end: () => `+=${window.innerHeight * 0.25}`,
+					scrub: 1,
+					// markers: false,
+					// duration: 0.01,
+					ease: "power1.out",
+					// toggleActions: "restart none none reverse",
+				},
+			}
+		);
+	}
+
 	function hideShowNav() {
 		const nav = document.querySelector(".nav");
 		if (!nav) return;
@@ -1361,7 +1389,7 @@ Ref: Studio Everywhere / Releaf.bio
 			};
 		});
 	}
-
+	homeHeroCorners();
 	hideShowNav();
 	openNav();
 	navDropdowns();
