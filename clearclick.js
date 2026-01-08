@@ -237,7 +237,9 @@ Ref: Studio Everywhere / Releaf.bio
 			function init() {
 				if (emblaApi) return;
 
-				emblaApi = EmblaCarousel(viewportNode, OPTIONS);
+				const ClassNames = window.EmblaCarouselClassNames?.ClassNames;
+
+				emblaApi = EmblaCarousel(viewportNode, OPTIONS, ClassNames ? [ClassNames()] : []);
 
 				emblaApi
 					.on("init", buildDots)
@@ -300,8 +302,30 @@ Ref: Studio Everywhere / Releaf.bio
 			duration: 12,
 		};
 
+		function getEmblaClassNamesPlugin() {
+			const g = window.EmblaCarouselClassNames;
+
+			// UMD builds can expose different shapes
+			if (!g) return null;
+			if (typeof g === "function") return g;
+			if (typeof g.ClassNames === "function") return g.ClassNames;
+			if (typeof g.default === "function") return g.default;
+			return null;
+		}
+
+		const ClassNamesPlugin = getEmblaClassNamesPlugin();
+		if (!ClassNamesPlugin) {
+			console.warn(
+				"[clearclick] Embla class-names plugin not found for caseStudiesCarousel(). Check window.EmblaCarouselClassNames"
+			);
+		}
+
 		// --- Init main Embla ---
-		const emblaMain = EmblaCarousel(mainViewport, MAIN_OPTIONS);
+		const emblaMain = EmblaCarousel(
+			mainViewport,
+			MAIN_OPTIONS,
+			ClassNamesPlugin ? [ClassNamesPlugin()] : []
+		);
 
 		// --- Build thumb slides dynamically ---
 		function buildThumbs() {
@@ -949,6 +973,18 @@ Ref: Studio Everywhere / Releaf.bio
 		const dropdowns = Array.from(document.querySelectorAll(".nav_dd"));
 		if (!dropdowns.length) return;
 
+		// --- DEBUG: keep one dropdown pinned open on desktop for CSS work ---
+		// Enable:
+		//   localStorage.setItem("ccDebugNavDd", "1")
+		//   localStorage.setItem("ccDebugNavDdIndex", "0") // optional
+		// Disable:
+		//   localStorage.removeItem("ccDebugNavDd")
+		//   localStorage.removeItem("ccDebugNavDdIndex")
+		const DEBUG_PIN =
+			localStorage.getItem("ccDebugNavDd") === "1" || window.__CC_DEBUG_NAV_DD === true;
+		const DEBUG_INDEX = Number(localStorage.getItem("ccDebugNavDdIndex") || "0") || 0;
+		const debugDd = dropdowns[DEBUG_INDEX] || null;
+
 		// Kill previous init if this gets called more than once (e.g. Webflow/FS rerenders)
 		if (navDropdowns._mm) {
 			navDropdowns._mm.kill();
@@ -959,7 +995,11 @@ Ref: Studio Everywhere / Releaf.bio
 		function closeAll(exceptEl = null) {
 			dropdowns.forEach((dd) => {
 				if (exceptEl && dd === exceptEl) return;
-				dd.classList.remove("is-open");
+
+				// Don't close the pinned dropdown (desktop debug)
+				if (DEBUG_PIN && dd === debugDd) return;
+
+				dd.classList.remove("is-open", "nav_dd--debug-open");
 
 				const data = dd._ccNavDd;
 				if (data?.tl) data.tl.reverse();
@@ -985,6 +1025,7 @@ Ref: Studio Everywhere / Releaf.bio
 				const list = dd.querySelector(".nav_dd-list");
 				const mmPanel = dd.querySelector(".c-mm");
 				const links = Array.from(dd.querySelectorAll(".mm_link"));
+				const keepOpen = DEBUG_PIN && dd === debugDd;
 
 				if (!list || !mmPanel) return;
 
@@ -1026,7 +1067,6 @@ Ref: Studio Everywhere / Releaf.bio
 					);
 				}
 
-				// store per-dd
 				dd._ccNavDd = { tl, mode: "desktop" };
 
 				const onEnter = () => {
@@ -1036,19 +1076,27 @@ Ref: Studio Everywhere / Releaf.bio
 				};
 
 				const onLeave = () => {
-					dd.classList.remove("is-open");
+					// Keep pinned dropdown open while you debug
+					if (keepOpen) return;
+
+					dd.classList.remove("is-open", "nav_dd--debug-open");
 					tl.reverse();
 				};
 
 				addListener(dd, "pointerenter", onEnter, unsubs);
 				addListener(dd, "pointerleave", onLeave, unsubs);
+
+				// If debug pinned, open immediately and mark it
+				if (keepOpen) {
+					dd.classList.add("is-open", "nav_dd--debug-open");
+					tl.play(0);
+				}
 			});
 
-			// Cleanup when leaving desktop MQ
 			return () => {
 				unsubs.forEach((fn) => fn());
 				dropdowns.forEach((dd) => {
-					dd.classList.remove("is-open");
+					dd.classList.remove("is-open", "nav_dd--debug-open");
 					if (dd._ccNavDd?.mode === "desktop") {
 						dd._ccNavDd.tl?.kill();
 						delete dd._ccNavDd;
@@ -1071,10 +1119,8 @@ Ref: Studio Everywhere / Releaf.bio
 
 				if (!list) return;
 
-				// kill any prior timeline
 				if (dd._ccNavDd?.tl) dd._ccNavDd.tl.kill();
 
-				// Closed baseline (mobile)
 				gsap.set(list, { height: 0, overflow: "hidden" });
 				gsap.set(dd, { backgroundColor: "transparent" });
 				if (svg) gsap.set(svg, { rotation: 90, transformOrigin: "50% 50%" });
@@ -1085,56 +1131,16 @@ Ref: Studio Everywhere / Releaf.bio
 					defaults: { ease: "power2.inOut" },
 				});
 
-				// Open mobile spec:
-				// - list height 0 -> auto
-				// - bg dd transparent -> #dadff6
-				// - rotate svg 90 -> 270
-				// - stagger links in (same as desktop)
-				tl.to(
-					list,
-					{
-						height: "auto",
-						duration: 0.5,
-					},
-					0
-				);
-				tl.to(
-					dd,
-					{
-						backgroundColor: "#dadff6",
-						duration: 0.29,
-						ease: "power1.out",
-					},
-					0
-				);
-				if (svg) {
-					tl.to(
-						svg,
-						{
-							rotation: 270,
-							duration: 0.29,
-							ease: "power1.out",
-						},
-						0
-					);
-				}
+				tl.to(list, { height: "auto", duration: 0.5 }, 0);
+				tl.to(dd, { backgroundColor: "#dadff6", duration: 0.29, ease: "power1.out" }, 0);
+				if (svg) tl.to(svg, { rotation: 270, duration: 0.29, ease: "power1.out" }, 0);
 				if (links.length) {
-					tl.to(
-						links,
-						{
-							autoAlpha: 1,
-							duration: 0.2,
-							stagger: 0.05,
-							ease: "power1.out",
-						},
-						0.05
-					);
+					tl.to(links, { autoAlpha: 1, duration: 0.2, stagger: 0.05, ease: "power1.out" }, 0.05);
 				}
 
 				dd._ccNavDd = { tl, mode: "mobile" };
 
 				const onClick = (e) => {
-					// If your toggle is an <a>, stop it jumping
 					if (toggle.tagName === "A") e.preventDefault();
 
 					const isOpen = dd.classList.contains("is-open");
@@ -1143,7 +1149,13 @@ Ref: Studio Everywhere / Releaf.bio
 						dd.classList.remove("is-open");
 						tl.reverse();
 					} else {
-						closeAll(dd);
+						// mobile stays normal (no debug pin here)
+						dropdowns.forEach((other) => {
+							if (other === dd) return;
+							other.classList.remove("is-open");
+							other._ccNavDd?.tl?.reverse();
+						});
+
 						dd.classList.add("is-open");
 						tl.play(0);
 					}
@@ -1152,13 +1164,11 @@ Ref: Studio Everywhere / Releaf.bio
 				addListener(toggle, "click", onClick, unsubs);
 			});
 
-			// Clicking mobile nav button should close all dropdowns
 			document.querySelectorAll(".nav_mobile-btn").forEach((btn) => {
-				const onBtn = () => closeAll();
+				const onBtn = () => closeAll(); // debug pin affects desktop only, so mobile closes all
 				addListener(btn, "click", onBtn, unsubs);
 			});
 
-			// Cleanup when leaving mobile MQ
 			return () => {
 				unsubs.forEach((fn) => fn());
 				dropdowns.forEach((dd) => {
@@ -1167,7 +1177,6 @@ Ref: Studio Everywhere / Releaf.bio
 						dd._ccNavDd.tl?.kill();
 						delete dd._ccNavDd;
 					}
-					// Clear inline styles we set (optional, but keeps desktop clean)
 					gsap.set(dd, { clearProps: "backgroundColor" });
 					const list = dd.querySelector(".nav_dd-list");
 					if (list) gsap.set(list, { clearProps: "height,overflow,display" });
@@ -1195,6 +1204,7 @@ Ref: Studio Everywhere / Releaf.bio
 		const ctaWrap = document.querySelector(".nav_menu-btn-wrap");
 		const buttons = Array.from(document.querySelectorAll(".nav_mobile-btn"));
 		const logo = document.querySelector(".nav .logo");
+		const listMask = document.querySelector(".nav_menu-list-mask");
 
 		if (!menu || !bg || !list || !buttons.length) return;
 
@@ -1260,6 +1270,7 @@ Ref: Studio Everywhere / Releaf.bio
 			gsap.set(menuWrap, { display: "none" });
 			gsap.set(bg, { autoAlpha: 0, scaleY: 0.5, transformOrigin: "50% 0%" });
 			if (items.length) gsap.set(items, { autoAlpha: 0 });
+			gsap.set(listMask, { autoAlpha: 0 });
 
 			const tl = gsap.timeline({
 				paused: true,
@@ -1309,6 +1320,9 @@ Ref: Studio Everywhere / Releaf.bio
 				);
 			}
 
+			//set list mask to visible at end of animation
+			tl.set(listMask, { autoAlpha: 1 }, ">");
+
 			function open() {
 				setOpenState(true);
 				tl.play(0);
@@ -1342,6 +1356,8 @@ Ref: Studio Everywhere / Releaf.bio
 				gsap.set(menuWrap, { clearProps: "display" });
 				gsap.set(bg, { clearProps: "opacity,visibility,transform" });
 				if (items.length) gsap.set(items, { clearProps: "opacity,visibility" });
+				gsap.set(listMask, { clearProps: "opacity,visibility" });
+				gsap.set(logo, { clearProps: "color" });
 			};
 		});
 	}
