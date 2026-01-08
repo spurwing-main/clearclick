@@ -121,6 +121,7 @@ Ref: Studio Everywhere / Releaf.bio
 	}
 
 	function initMotionCounters() {
+		return;
 		if (!animate || !inView) {
 			console.warn("[clearclick] Motion animate/inView unavailable, skipping counters");
 			return;
@@ -405,7 +406,7 @@ Ref: Studio Everywhere / Releaf.bio
 
 		ScrollTrigger.matchMedia({
 			// Only run the pinned desktop orbit when the viewport is tall enough
-			"(min-width: 992px) and (min-height: 960px)": () => {
+			"(min-width: 992px) and (min-height: 640px)": () => {
 				gsap.set(cards, {
 					opacity: 0,
 				});
@@ -486,7 +487,7 @@ Ref: Studio Everywhere / Releaf.bio
 			},
 
 			// Desktop width, but short height: avoid pin/cropping and show content normally
-			"(min-width: 992px) and (max-height: 959px)": () => {
+			"(min-width: 992px) and (max-height: 639px)": () => {
 				// Ensure everything is visible and not mid-animation if the user resized into this state
 				gsap.killTweensOf([cards, ring, pulse, track]);
 				gsap.set(cards, { opacity: 1, clearProps: "transform" });
@@ -863,7 +864,6 @@ Ref: Studio Everywhere / Releaf.bio
 			const items = Array.from(group.querySelectorAll(".cc-reveal-item"));
 			if (!items.length) return;
 
-			// Config via data-attrs (optional)
 			const y =
 				parseFloat(group.getAttribute("data-cc-reveal-y") || "") ||
 				parseFloat(getComputedStyle(group).getPropertyValue("--cc-reveal-y") || "") ||
@@ -885,15 +885,43 @@ Ref: Studio Everywhere / Releaf.bio
 			// Baseline (hidden)
 			gsap.set(items, { autoAlpha: 0, y });
 
+			function dispatchCountUpForItem(item) {
+				// Find MotionCountUp inside this reveal item
+				const el = item.querySelector("[data-motion-countup-event]");
+				if (!el) return;
+
+				console.log("Dispatching countup event for", el);
+
+				const eventName = el.getAttribute("data-motion-countup-event");
+				if (!eventName) return;
+
+				window.dispatchEvent(
+					new CustomEvent(eventName, {
+						detail: { trigger: group, item },
+					})
+				);
+			}
+
 			const tl = gsap.timeline({ paused: true });
-			tl.to(items, {
-				autoAlpha: 1,
-				y: 0,
-				duration,
-				ease: "power2.out",
-				stagger: staggerAmt,
-				overwrite: "auto",
-				clearProps: "transform",
+
+			items.forEach((item, i) => {
+				const t = i * staggerAmt;
+
+				// Start the countup exactly when this item starts animating in
+				tl.call(() => dispatchCountUpForItem(item), null, t);
+
+				tl.to(
+					item,
+					{
+						autoAlpha: 1,
+						y: 0,
+						duration,
+						ease: "power2.out",
+						overwrite: "auto",
+						clearProps: "transform",
+					},
+					t
+				);
 			});
 
 			ScrollTrigger.create({
