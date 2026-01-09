@@ -103,7 +103,6 @@ function main() {
 	}
 
 	function logoStaggers() {
-		return;
 		var delay = 400; // adjust as needed for a faster or slower stagger
 		$(".logo-cycle_track").each(function (index) {
 			const card = $(this);
@@ -994,7 +993,7 @@ Ref: Studio Everywhere / Releaf.bio
 						ease: "power2.out",
 						overwrite: "auto",
 						clearProps: "transform",
-						// onStart: () => dispatchCountUpForItem(item, group),
+						onStart: () => dispatchCountUpForItem(item, group),
 					},
 					t
 				);
