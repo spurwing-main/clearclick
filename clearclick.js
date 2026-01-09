@@ -922,12 +922,16 @@ Ref: Studio Everywhere / Releaf.bio
 		const groups = Array.from(document.querySelectorAll(".cc-reveal"));
 		if (!groups.length) return;
 
+		let madeAny = false;
+
 		groups.forEach((group) => {
 			if (group._ccRevealBound) return;
-			group._ccRevealBound = true;
 
 			const items = Array.from(group.querySelectorAll(".cc-reveal-item"));
-			if (!items.length) return;
+			if (!items.length) return; // ✅ don't bind yet
+
+			group._ccRevealBound = true; // ✅ only bind once items exist
+			madeAny = true;
 
 			const y =
 				parseFloat(group.getAttribute("data-cc-reveal-y") || "") ||
@@ -992,7 +996,7 @@ Ref: Studio Everywhere / Releaf.bio
 						duration,
 						ease: "power2.out",
 						overwrite: "auto",
-						clearProps: "transform",
+						clearProps: "y",
 						onStart: () => dispatchCountUpForItem(item, group),
 					},
 					t
@@ -1001,13 +1005,22 @@ Ref: Studio Everywhere / Releaf.bio
 
 			ringsRoots.forEach((ringsRoot) => addRingsToTimeline(tl, ringsRoot, 0));
 
-			ScrollTrigger.create({
+			const st = ScrollTrigger.create({
 				trigger: group,
 				start,
 				once,
-				onEnter: () => requestAnimationFrame(() => tl.play(0)),
+				onEnter: () => tl.play(0),
+				onEnterBack: () => tl.play(0), // optional
+				onRefresh: (self) => {
+					// If we’re past the start point, reveal.
+					if (self.progress > 0) tl.play(0);
+				},
 			});
+			// Also do an immediate check right after creation:
+			if (st.progress > 0) tl.play(0);
 		});
+		// ✅ helps when content/fonts/images cause layout shifts
+		if (madeAny) ScrollTrigger.refresh();
 	}
 
 	function navDropdowns() {
@@ -1456,6 +1469,452 @@ Ref: Studio Everywhere / Releaf.bio
 		);
 	}
 
+	// function expandSolutionServiceTags_v1() {
+	// 	const tagDefaultCount = 3;
+
+	// 	const solCards = Array.from(document.querySelectorAll(".sol-card"));
+	// 	if (!solCards.length) return;
+
+	// 	solCards.forEach((card) => {
+	// 		// get tags container .sol-card_services-list
+	// 		const tagsList = card.querySelector(".sol-card_services-list");
+	// 		if (!tagsList) return;
+	// 		// get more button in list
+	// 		const moreBtn = tagsList.querySelector(".sol-card_services-more");
+	// 		if (!moreBtn) return;
+	// 		//get all tags in list .c-service
+	// 		const tags = tagsList.querySelectorAll(".c-service");
+	// 		if (tags.length <= tagDefaultCount) {
+	// 			// no need to expand
+	// 			moreBtn.style.display = "none";
+	// 			card._tagsExpanded = true;
+	// 			return;
+	// 		}
+
+	// 		//set text of button to "+X more"
+	// 		const extraCount = tags.length - tagDefaultCount;
+	// 		moreBtn.textContent = `+ ${extraCount} more`;
+
+	// 		card._tagsExpanded = false;
+
+	// 		// hide tags beyond default count
+	// 		tags.forEach((tag, index) => {
+	// 			if (index >= tagDefaultCount) {
+	// 				gsap.set(tag, { display: "none" });
+	// 			}
+	// 		});
+
+	// 		// add click listener to more button
+	// 		moreBtn.addEventListener("click", onMoreClick);
+
+	// 		function onMoreClick(e) {
+	// 			e.preventDefault();
+
+	// 			if (card._tagsExpanded) return;
+
+	// 			const tagsList = card.querySelector(".sol-card_services-list");
+	// 			if (!tagsList) return;
+	// 			const moreBtn = tagsList.querySelector(".sol-card_services-more");
+	// 			if (!moreBtn) return;
+	// 			const tags = Array.from(tagsList.querySelectorAll(".c-service"));
+	// 			const hiddenTags = tags.slice(tagDefaultCount);
+
+	// 			// get current state of card
+	// 			const collapsedState = Flip.getState([card, tagsList], {
+	// 				props: "width,height",
+	// 			});
+
+	// 			gsap.set(tags, { display: "block" });
+	// 			gsap.set(moreBtn, { display: "none" });
+	// 			gsap.set(hiddenTags, { autoAlpha: 0 });
+
+	// 			const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
+
+	// 			tl.add(
+	// 				Flip.from(collapsedState, {
+	// 					duration: 0.5,
+	// 					ease: "power1.inOut",
+	// 					// nested: true,
+	// 				}),
+	// 				0
+	// 			);
+
+	// 			tl.to(
+	// 				hiddenTags,
+	// 				{
+	// 					autoAlpha: 1,
+	// 					duration: 0.25,
+	// 					ease: "power2.out",
+	// 					stagger: 0.06,
+	// 					clearProps: "transform", // don't clear opacity/visibility (prevents snapping back)
+	// 				},
+	// 				0.12
+	// 			);
+
+	// 			card._tagsExpanded = true;
+	// 		}
+	// 	});
+	// }
+
+	function expandSolutionServiceTags() {
+		const tagDefaultCount = 3;
+
+		if (typeof gsap === "undefined") {
+			console.warn("[clearclick] GSAP not found, skipping expandSolutionServiceTags()");
+			return;
+		}
+
+		const hasFlip = typeof Flip !== "undefined" && typeof Flip.getState === "function";
+		const solCards = Array.from(document.querySelectorAll(".sol-card"));
+		if (!solCards.length) return;
+
+		function getTagsList(card) {
+			return card.querySelector(".sol-card_services-list");
+		}
+
+		function getMoreBtn(tagsList) {
+			// Prefer immediate child button (per your spec), fallback to any descendant
+			return (
+				tagsList.querySelector(":scope > button.sol-card_services-more") ||
+				tagsList.querySelector("button.sol-card_services-more, .sol-card_services-more")
+			);
+		}
+
+		function getTags(tagsList) {
+			return Array.from(tagsList.querySelectorAll(".c-service"));
+		}
+
+		function storeDisplay(el, fallback = "inline-flex") {
+			if (!el || el.dataset.ccDisplay) return;
+			const d = getComputedStyle(el).display;
+			el.dataset.ccDisplay = d && d !== "none" ? d : fallback;
+		}
+
+		function showEl(el) {
+			if (!el) return;
+			const d = el.dataset.ccDisplay || "inline-flex";
+			gsap.set(el, { display: d });
+		}
+
+		function hideEl(el) {
+			if (!el) return;
+			gsap.set(el, { display: "none" });
+		}
+
+		function setMoreLabel(moreBtn, tagsCount) {
+			if (!moreBtn) return;
+			const extraCount = Math.max(0, tagsCount - tagDefaultCount);
+			moreBtn.textContent = `+ ${extraCount} more`;
+		}
+
+		function collapseCard(card) {
+			const tagsList = getTagsList(card);
+			if (!tagsList) return;
+
+			const moreBtn = getMoreBtn(tagsList);
+			const tags = getTags(tagsList);
+
+			// Store displays so we can restore properly later
+			tags.forEach((t) => storeDisplay(t, "inline-flex"));
+			storeDisplay(moreBtn, "inline-flex");
+
+			// Kill any in-progress animation that could fight resize sync
+			gsap.killTweensOf(card);
+			gsap.killTweensOf(tags);
+
+			// If there are <= 3 tags, no expansion is needed
+			if (tags.length <= tagDefaultCount) {
+				tags.forEach(showEl);
+				hideEl(moreBtn);
+				card._tagsExpanded = true; // effectively "done"
+				return;
+			}
+
+			setMoreLabel(moreBtn, tags.length);
+
+			tags.forEach((tag, idx) => {
+				if (idx < tagDefaultCount) showEl(tag);
+				else hideEl(tag);
+				gsap.set(tag, { clearProps: "opacity,visibility,transform" });
+			});
+
+			showEl(moreBtn);
+			card._tagsExpanded = false;
+
+			// Clear any forced height/overflow from prior FLIP/height tweens
+			gsap.set(card, { clearProps: "height,overflow" });
+		}
+
+		function expandCard(card, { animate = true } = {}) {
+			const tagsList = getTagsList(card);
+			if (!tagsList) return;
+
+			const moreBtn = getMoreBtn(tagsList);
+			const tags = getTags(tagsList);
+			if (!tags.length) return;
+
+			// Nothing to expand
+			if (tags.length <= tagDefaultCount) {
+				tags.forEach(showEl);
+				hideEl(moreBtn);
+				card._tagsExpanded = true;
+				return;
+			}
+
+			if (card._tagsExpanded) {
+				// Ensure the "expanded" end-state is correct (useful after resize/re-init)
+				tags.forEach((t) => {
+					showEl(t);
+					gsap.set(t, { clearProps: "opacity,visibility,transform" });
+				});
+				hideEl(moreBtn);
+				gsap.set(card, { clearProps: "height,overflow" });
+				return;
+			}
+
+			const hiddenTags = tags.slice(tagDefaultCount);
+
+			// Store displays so we can restore properly later
+			tags.forEach((t) => storeDisplay(t, "inline-flex"));
+			storeDisplay(moreBtn, "inline-flex");
+
+			// Capture layout state before we change display values
+			let collapsedState = null;
+			if (animate && hasFlip) {
+				collapsedState = Flip.getState([card, tagsList, moreBtn], {
+					props: "width,height,opacity,transform",
+				});
+			}
+
+			// Apply final layout: show all tags, hide the more button
+			tags.forEach(showEl);
+			hideEl(moreBtn);
+
+			// Prep reveal animation for the tags that were hidden
+			if (hiddenTags.length) {
+				gsap.set(hiddenTags, { autoAlpha: animate ? 0 : 1 });
+			}
+
+			if (!animate) {
+				if (hiddenTags.length) gsap.set(hiddenTags, { clearProps: "opacity,visibility,transform" });
+				card._tagsExpanded = true;
+				return;
+			}
+
+			const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
+
+			if (hasFlip && collapsedState) {
+				tl.add(
+					Flip.from(collapsedState, {
+						duration: 0.5,
+						ease: "power1.inOut",
+					}),
+					0
+				);
+			} else {
+				// Fallback: animate card height if Flip isn't available
+				const startH = card.offsetHeight;
+				gsap.set(card, { height: startH, overflow: "hidden" });
+
+				// Force a reflow after DOM changes
+				const endH = card.offsetHeight;
+
+				tl.to(card, {
+					height: endH,
+					duration: 0.45,
+					ease: "power1.inOut",
+					onComplete: () => gsap.set(card, { clearProps: "height,overflow" }),
+				});
+			}
+
+			if (hiddenTags.length) {
+				tl.to(
+					hiddenTags,
+					{
+						autoAlpha: 1,
+						y: 0,
+						duration: 0.25,
+						ease: "power2.out",
+						stagger: 0.06,
+						onComplete: () => gsap.set(hiddenTags, { clearProps: "opacity,visibility,transform" }),
+					},
+					0.12
+				);
+			}
+
+			card._tagsExpanded = true;
+		}
+
+		// Bind + initial sync
+		solCards.forEach((card) => {
+			const tagsList = getTagsList(card);
+			if (!tagsList) return;
+
+			const moreBtn = getMoreBtn(tagsList);
+			const tags = getTags(tagsList);
+
+			// If there isn't a more button, we can still collapse (hide >3) if desired,
+			// but your requirement assumes the button exists; so just exit.
+			if (!moreBtn) return;
+
+			// Store original displays up-front
+			tags.forEach((t) => storeDisplay(t, "inline-flex"));
+			storeDisplay(moreBtn, "inline-flex");
+
+			// Bind once
+			if (!card._ccServicesBound) {
+				card._ccServicesBound = true;
+
+				card._ccServicesMoreClick = (e) => {
+					e.preventDefault();
+					expandCard(card, { animate: true });
+				};
+
+				moreBtn.addEventListener("click", card._ccServicesMoreClick);
+			}
+
+			// Initial state: collapse unless already expanded
+			if (card._tagsExpanded) expandCard(card, { animate: false });
+			else collapseCard(card);
+		});
+
+		// --- Resize handling (debounced) ---
+		if (expandSolutionServiceTags._onResize) {
+			window.removeEventListener("resize", expandSolutionServiceTags._onResize);
+		}
+
+		expandSolutionServiceTags._onResize = debounce(() => {
+			solCards.forEach((card) => {
+				const tagsList = getTagsList(card);
+				if (!tagsList) return;
+
+				// On resize, don't animate; just ensure correct layout for current state
+				if (card._tagsExpanded) expandCard(card, { animate: false });
+				else collapseCard(card);
+			});
+		}, 150);
+
+		window.addEventListener("resize", expandSolutionServiceTags._onResize);
+	}
+
+	function pinSolutionCardsMobile() {
+		const wrapper =
+			document.querySelector(".sol-listing_pin") || document.querySelector(".sol-listing_main");
+		if (!wrapper) return;
+
+		const cards = Array.from(wrapper.querySelectorAll(".sol-card"));
+		if (cards.length < 2) return;
+
+		// Kill previous init if this gets called more than once (FS re-render etc.)
+		if (pinSolutionCardsMobile._mm) {
+			pinSolutionCardsMobile._mm.kill();
+			pinSolutionCardsMobile._mm = null;
+		}
+
+		const mm = gsap.matchMedia();
+		pinSolutionCardsMobile._mm = mm;
+
+		mm.add("(max-width: 767px)", () => {
+			const triggers = [];
+			const tweens = [];
+
+			const lastCard = cards[cards.length - 1];
+
+			const scaleStep = 0.05; // per depth
+			const scaleMin = 0.8; // clamp
+			const scaleStart = "top 75%";
+
+			const getPinOffset = () => {
+				const nav = document.querySelector(".nav");
+				const navH = nav ? nav.getBoundingClientRect().height : 0;
+				const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16;
+				return Math.round(navH + 2 * remPx);
+			};
+
+			const pinTop = () => `top-=${getPinOffset()} top`;
+
+			// Make sure incoming cards sit above earlier cards
+			cards.forEach((card, i) => {
+				gsap.set(card, { zIndex: i + 1, transformOrigin: "50% 0%" });
+			});
+
+			// Refresh helper (debounced)
+			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
+
+			// Pin each card once it reaches the top, keep pinned until the last card has fully come through.
+			// End at "bottom top" of the last card to avoid a jump at the exact moment last hits top.
+			cards.slice(0, -1).forEach((card, i) => {
+				const st_pin = ScrollTrigger.create({
+					id: `ccSolStackPin_${i}`,
+					trigger: card,
+					start: pinTop, // ✅ below nav + 2rem
+					endTrigger: lastCard,
+					end: () => `top top+=${getPinOffset()}`, // ✅ match the same top offset
+					pin: true,
+					pinSpacing: false,
+					anticipatePin: 1,
+					invalidateOnRefresh: true,
+				});
+				triggers.push(st_pin);
+			});
+
+			// Scale “behind” cards as the next card approaches the top.
+			// As card[i] comes in, cards[0..i-1] scale down in steps.
+			cards.forEach((incoming, i) => {
+				if (i === 0) return;
+
+				for (let j = 0; j < i; j++) {
+					const depth = i - j; // 1 = directly behind, 2 = further back, etc.
+					const targetScale = Math.max(scaleMin, 1 - depth * scaleStep);
+
+					const tween = gsap.to(cards[j], {
+						scale: 0.5,
+						ease: "none",
+						overwrite: "auto",
+						scrollTrigger: {
+							trigger: incoming,
+							start: scaleStart,
+							end: pinTop, // ✅ scale completes when incoming hits the pinned top
+							scrub: true,
+							invalidateOnRefresh: true,
+						},
+					});
+
+					tweens.push(tween);
+					triggers.push(tween.scrollTrigger);
+				}
+			});
+
+			// Height changes: service-tag “more” button expands card → refresh ST after it runs
+			const onClick = (e) => {
+				if (!e.target.closest(".sol-card_services-more")) return;
+				// give your Flip/height animation time, then refresh
+				setTimeout(refresh, 450);
+			};
+			wrapper.addEventListener("click", onClick);
+
+			// Height changes: wrap/reflow/fonts/expanded tags
+			let ro = null;
+			if (typeof ResizeObserver !== "undefined") {
+				ro = new ResizeObserver(() => refresh());
+				cards.forEach((c) => ro.observe(c));
+			}
+
+			// Initial refresh after everything is laid out
+			requestAnimationFrame(() => ScrollTrigger.refresh());
+
+			return () => {
+				wrapper.removeEventListener("click", onClick);
+				if (ro) ro.disconnect();
+
+				triggers.forEach((st) => st && st.kill && st.kill());
+				tweens.forEach((t) => t && t.kill && t.kill());
+
+				cards.forEach((card) => gsap.set(card, { clearProps: "zIndex,transform" }));
+			};
+		});
+	}
+
 	homeHeroCorners();
 	hideShowNav();
 	openNav();
@@ -1465,6 +1924,8 @@ Ref: Studio Everywhere / Releaf.bio
 	caseStudiesCarousel();
 	orbit();
 	initScrollReveals();
+	expandSolutionServiceTags();
+	pinSolutionCardsMobile();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
