@@ -682,16 +682,16 @@ Ref: Studio Everywhere / Releaf.bio
 		const services = pane.querySelector(".tab-pane_services");
 		// if (!header || !subtitle || !body || !footer || !services) return null;
 
-		const svg = pane.querySelector(".tab-services_graphic");
+		const svg = pane.querySelector("svg.svg-rings");
 		if (!svg) return null;
 
-		const ringA = svg.querySelector(".tab-services-ring-a");
-		const ringB = svg.querySelector(".tab-services-ring-b");
-		const ringC = svg.querySelector(".tab-services-ring-c");
+		const ringA = svg.querySelector(".ring-a");
+		const ringB = svg.querySelector(".ring-b");
+		const ringC = svg.querySelector(".ring-c");
 		if (!ringA || !ringB || !ringC) return null;
 
 		// Reset state each time so replay is consistent
-		gsap.set([ringA, ringB, ringC], { opacity: 0, scale: 0.85 });
+		setRingsInitial(svg);
 		gsap.set([header, subtitle, body, footer, services], { autoAlpha: 0, y: 20 });
 
 		const tl = gsap.timeline(
@@ -704,18 +704,10 @@ Ref: Studio Everywhere / Releaf.bio
 		tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
 		tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
 		tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
-		tl.to(
-			[ringC, ringB, ringA],
-			{
-				opacity: 1,
-				scale: 1,
-				duration: 1,
-				ease: "power2.out",
-				stagger: 0.5,
-				overwrite: "auto",
-			},
-			"<"
-		);
+
+		// Consistent rings animation everywhere
+		addRingsToTimeline(tl, svg, "<");
+
 		return tl;
 	}
 
@@ -958,6 +950,9 @@ Ref: Studio Everywhere / Releaf.bio
 			// Baseline (hidden)
 			gsap.set(items, { autoAlpha: 0, y });
 
+			const ringsRoots = Array.from(group.querySelectorAll(".cc-reveal-rings"));
+			ringsRoots.forEach((ringsRoot) => setRingsInitial(ringsRoot));
+
 			function fireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
 				const start = performance.now();
 
@@ -998,11 +993,13 @@ Ref: Studio Everywhere / Releaf.bio
 						ease: "power2.out",
 						overwrite: "auto",
 						clearProps: "transform",
-						onStart: () => dispatchCountUpForItem(item, group),
+						// onStart: () => dispatchCountUpForItem(item, group),
 					},
 					t
 				);
 			});
+
+			ringsRoots.forEach((ringsRoot) => addRingsToTimeline(tl, ringsRoot, 0));
 
 			ScrollTrigger.create({
 				trigger: group,
@@ -1410,6 +1407,55 @@ Ref: Studio Everywhere / Releaf.bio
 			};
 		});
 	}
+
+	// --------- shared ring animation (used across site) ----------
+	function getRingsFromSvg(svg) {
+		if (!svg) return null;
+		const ringA = svg.querySelector(".ring-a");
+		const ringB = svg.querySelector(".ring-b");
+		const ringC = svg.querySelector(".ring-c");
+		if (!ringA || !ringB || !ringC) return null;
+		return { ringA, ringB, ringC };
+	}
+
+	function setRingsInitial(svgOrRootEl) {
+		const svg =
+			svgOrRootEl?.tagName?.toLowerCase() === "svg"
+				? svgOrRootEl
+				: svgOrRootEl?.querySelector?.("svg");
+		const rings = getRingsFromSvg(svg);
+		if (!rings) return;
+
+		gsap.set([rings.ringA, rings.ringB, rings.ringC], {
+			opacity: 0,
+			scale: 0.85,
+			transformOrigin: "50% 50%",
+		});
+	}
+
+	function addRingsToTimeline(tl, svgOrRootEl, position = "<") {
+		const svg =
+			svgOrRootEl?.tagName?.toLowerCase() === "svg"
+				? svgOrRootEl
+				: svgOrRootEl?.querySelector?.("svg");
+		const rings = getRingsFromSvg(svg);
+		if (!rings) return;
+
+		// Match buildPaneTimeline ring feel
+		tl.to(
+			[rings.ringC, rings.ringB, rings.ringA],
+			{
+				opacity: 1,
+				scale: 1,
+				duration: 1,
+				ease: "power2.out",
+				stagger: 0.5,
+				overwrite: "auto",
+			},
+			position
+		);
+	}
+
 	homeHeroCorners();
 	hideShowNav();
 	openNav();
