@@ -134,7 +134,7 @@ Ref: Studio Everywhere / Releaf.bio
 				scrollTrigger: {
 					trigger: el,
 					start: "top 75%",
-					end: "top 5%",
+					end: "bottom 50%",
 					scrub: 1,
 					markers: false,
 				},
@@ -355,6 +355,8 @@ Ref: Studio Everywhere / Releaf.bio
 			ClassNamesPlugin ? [ClassNamesPlugin()] : []
 		);
 
+		const mainSlides = emblaMain.slideNodes();
+
 		// --- Build thumb slides dynamically ---
 		function buildThumbs() {
 			thumbContainer.innerHTML = "";
@@ -425,6 +427,18 @@ Ref: Studio Everywhere / Releaf.bio
 			}
 		}
 
+		function updateMainSlideStates() {
+			const selected = emblaMain.selectedScrollSnap();
+
+			mainSlides.forEach((slide, i) => {
+				slide.classList.remove("is-active", "is-prev", "is-next");
+
+				if (i === selected) slide.classList.add("is-active");
+				if (i === selected - 1) slide.classList.add("is-prev");
+				if (i === selected + 1) slide.classList.add("is-next");
+			});
+		}
+
 		emblaMain.on("select", syncThumbs);
 		emblaThumb.on("init", syncThumbs);
 
@@ -434,6 +448,13 @@ Ref: Studio Everywhere / Releaf.bio
 		emblaThumb.on("init", updateThumbLayout);
 		emblaThumb.on("reInit", updateThumbLayout);
 		window.addEventListener("resize", updateThumbLayout);
+
+		emblaMain.on("init", updateMainSlideStates);
+		emblaMain.on("select", updateMainSlideStates);
+		emblaMain.on("reInit", updateMainSlideStates);
+
+		// Initial run
+		updateMainSlideStates();
 	}
 
 	function orbit() {
