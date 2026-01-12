@@ -1798,14 +1798,16 @@ Ref: Studio Everywhere / Releaf.bio
 	}
 
 	function pinSolutionCardsMobile() {
+		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
+			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping pinSolutionCardsMobile()");
+			return;
+		}
+
 		const wrapper =
 			document.querySelector(".sol-listing_pin") || document.querySelector(".sol-listing_main");
 		if (!wrapper) return;
 
-		const cards = Array.from(wrapper.querySelectorAll(".sol-card"));
-		if (cards.length < 2) return;
-
-		// Kill previous init if this gets called more than once (FS re-render etc.)
+		// Kill previous init if this gets called more than once
 		if (pinSolutionCardsMobile._mm) {
 			pinSolutionCardsMobile._mm.kill();
 			pinSolutionCardsMobile._mm = null;
@@ -1815,15 +1817,15 @@ Ref: Studio Everywhere / Releaf.bio
 		pinSolutionCardsMobile._mm = mm;
 
 		mm.add("(max-width: 767px)", () => {
+			const cards = Array.from(wrapper.querySelectorAll(".sol-card"));
+			if (cards.length < 2) return;
+
 			const triggers = [];
 			const tweens = [];
 
 			const lastCard = cards[cards.length - 1];
 
-			const scaleStep = 0.05; // per depth
-			const scaleMin = 0.8; // clamp
-			const scaleStart = "top 75%";
-
+			// nav height + 2rem
 			const getPinOffset = () => {
 				const nav = document.querySelector(".nav");
 				const navH = nav ? nav.getBoundingClientRect().height : 0;
@@ -1831,84 +1833,98 @@ Ref: Studio Everywhere / Releaf.bio
 				return Math.round(navH + 2 * remPx);
 			};
 
-			const pinTop = () => `top-=${getPinOffset()} top`;
+			const pinStart = () => `top top+=${getPinOffset()}`;
 
-			// Make sure incoming cards sit above earlier cards
+			// Layering
 			cards.forEach((card, i) => {
 				gsap.set(card, { zIndex: i + 1, transformOrigin: "50% 0%" });
 			});
 
-			// Refresh helper (debounced)
 			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
 
-			// Pin each card once it reaches the top, keep pinned until the last card has fully come through.
-			// End at "bottom top" of the last card to avoid a jump at the exact moment last hits top.
+			// Pin all but the last card
 			cards.slice(0, -1).forEach((card, i) => {
-				const st_pin = ScrollTrigger.create({
+				const st = ScrollTrigger.create({
 					id: `ccSolStackPin_${i}`,
 					trigger: card,
-					start: pinTop, // ✅ below nav + 2rem
+					start: pinStart,
 					endTrigger: lastCard,
-					end: () => `top top+=${getPinOffset()}`, // ✅ match the same top offset
+					// release when the LAST card reaches the same offset line
+					end: () => `top top+=${getPinOffset()}`,
 					pin: true,
 					pinSpacing: false,
 					anticipatePin: 1,
 					invalidateOnRefresh: true,
 				});
-				triggers.push(st_pin);
+				triggers.push(st);
 			});
 
-			// Scale “behind” cards as the next card approaches the top.
-			// As card[i] comes in, cards[0..i-1] scale down in steps.
+			// “Behind” card effect: when a new card approaches, scale + tint the previous pinned card
 			cards.forEach((incoming, i) => {
 				if (i === 0) return;
 
-				for (let j = 0; j < i; j++) {
-					const depth = i - j; // 1 = directly behind, 2 = further back, etc.
-					const targetScale = Math.max(scaleMin, 1 - depth * scaleStep);
+				const prevCard = cards[i - 1];
+				const prevBg = prevCard.querySelector(".sol-card_bg");
 
-					const tween = gsap.to(cards[j], {
-						scale: 0.5,
-						ease: "none",
+				const tl = gsap.timeline({
+					scrollTrigger: {
+						trigger: incoming,
+						start: "top 25%",
+						toggleActions: "play none none reverse",
+						invalidateOnRefresh: true,
+					},
+				});
+
+				tl.to(
+					prevCard,
+					{
+						scale: 0.85,
+						duration: 0.4,
+						ease: "power1.out",
 						overwrite: "auto",
-						scrollTrigger: {
-							trigger: incoming,
-							start: scaleStart,
-							end: pinTop, // ✅ scale completes when incoming hits the pinned top
-							scrub: true,
-							invalidateOnRefresh: true,
-						},
-					});
+					},
+					0
+				);
 
-					tweens.push(tween);
-					triggers.push(tween.scrollTrigger);
+				if (prevBg) {
+					tl.to(
+						prevBg,
+						{
+							backgroundColor: "var(--_color---blue--pale)",
+							duration: 0.2,
+							ease: "linear",
+							overwrite: "auto",
+						},
+						0
+					);
 				}
+
+				tweens.push(tl);
+				triggers.push(tl.scrollTrigger);
 			});
 
-			// Height changes: service-tag “more” button expands card → refresh ST after it runs
+			// Service-tag expansion affects heights → refresh after the expand animation
 			const onClick = (e) => {
 				if (!e.target.closest(".sol-card_services-more")) return;
-				// give your Flip/height animation time, then refresh
-				setTimeout(refresh, 450);
+				setTimeout(refresh, 600);
 			};
 			wrapper.addEventListener("click", onClick);
 
-			// Height changes: wrap/reflow/fonts/expanded tags
+			// Any height change (wrap/expand/fonts) → refresh
 			let ro = null;
 			if (typeof ResizeObserver !== "undefined") {
 				ro = new ResizeObserver(() => refresh());
 				cards.forEach((c) => ro.observe(c));
 			}
 
-			// Initial refresh after everything is laid out
 			requestAnimationFrame(() => ScrollTrigger.refresh());
 
 			return () => {
 				wrapper.removeEventListener("click", onClick);
 				if (ro) ro.disconnect();
 
-				triggers.forEach((st) => st && st.kill && st.kill());
-				tweens.forEach((t) => t && t.kill && t.kill());
+				triggers.forEach((st) => st?.kill?.());
+				tweens.forEach((t) => t?.kill?.());
 
 				cards.forEach((card) => gsap.set(card, { clearProps: "zIndex,transform" }));
 			};
