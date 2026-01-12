@@ -1005,19 +1005,27 @@ Ref: Studio Everywhere / Releaf.bio
 
 			ringsRoots.forEach((ringsRoot) => addRingsToTimeline(tl, ringsRoot, 0));
 
+			let revealed = false;
+			const reveal = () => {
+				if (revealed) return;
+				revealed = true;
+				group._ccRevealRevealed = true;
+				tl.play(0);
+			};
+
 			const st = ScrollTrigger.create({
 				trigger: group,
 				start,
-				once,
-				onEnter: () => tl.play(0),
-				onEnterBack: () => tl.play(0), // optional
+				once, // keep your existing once behavior
+				onEnter: reveal,
+				// ❌ remove onEnterBack restart; it causes the “fires as you scroll up/down” effect
 				onRefresh: (self) => {
-					// If we’re past the start point, reveal.
-					if (self.progress > 0) tl.play(0);
+					// If we're already past the start when refreshed, reveal once.
+					if (self.progress > 0) reveal();
 				},
 			});
-			// Also do an immediate check right after creation:
-			if (st.progress > 0) tl.play(0);
+
+			if (st.progress > 0) reveal();
 		});
 		// ✅ helps when content/fonts/images cause layout shifts
 		if (madeAny) ScrollTrigger.refresh();
@@ -1886,18 +1894,18 @@ Ref: Studio Everywhere / Releaf.bio
 					0
 				);
 
-				if (prevBg) {
-					tl.to(
-						prevBg,
-						{
-							backgroundColor: "var(--_color---blue--pale)",
-							duration: 0.2,
-							ease: "linear",
-							overwrite: "auto",
-						},
-						0
-					);
-				}
+				// if (prevBg) {
+				// 	tl.to(
+				// 		prevBg,
+				// 		{
+				// 			backgroundColor: "var(--_color---blue--pale)",
+				// 			duration: 0.2,
+				// 			ease: "linear",
+				// 			overwrite: "auto",
+				// 		},
+				// 		0
+				// 	);
+				// }
 
 				tweens.push(tl);
 				triggers.push(tl.scrollTrigger);
