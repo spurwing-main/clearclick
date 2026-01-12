@@ -230,7 +230,7 @@ Ref: Studio Everywhere / Releaf.bio
 			const emblaNode = component.querySelector(".latest_list-wrap.embla");
 			if (!emblaNode) return;
 
-			const viewportNode = emblaNode; // emblaNode IS the viewport in your markup
+			const viewportNode = emblaNode;
 			const dotsNode = component.querySelector(".latest_dots");
 			if (!dotsNode) return;
 
@@ -300,6 +300,207 @@ Ref: Studio Everywhere / Releaf.bio
 
 			// Listen once per component
 			mq.addEventListener("change", breakpointCheck);
+		});
+	}
+
+	function approachSliderCarousel() {
+		// Requires EmblaCarousel on window
+		if (typeof EmblaCarousel === "undefined") {
+			console.warn("[clearclick] EmblaCarousel not found, skipping approachSliderCarousel()");
+			return;
+		}
+
+		// DrawSVG support (optional but requested)
+		const hasDrawSVG =
+			(typeof gsap !== "undefined" && gsap.plugins && gsap.plugins.DrawSVGPlugin) ||
+			typeof DrawSVGPlugin !== "undefined";
+
+		if (typeof DrawSVGPlugin !== "undefined" && (!gsap.plugins || !gsap.plugins.DrawSVGPlugin)) {
+			// Safe to call even if already registered
+			gsap.registerPlugin(DrawSVGPlugin);
+		}
+
+		if (!hasDrawSVG) {
+			console.warn(
+				"[clearclick] DrawSVGPlugin not found; .approach-card_line animations will be skipped."
+			);
+		}
+		const components = Array.from(document.querySelectorAll(".c-approach-slider"));
+		if (!components.length) return;
+
+		const OPTIONS = {
+			align: "start",
+			containScroll: "keepSnaps",
+			loop: false,
+			dragFree: false,
+		};
+
+		components.forEach((component) => {
+			if (component._ccApproachEmblaBound) return;
+			component._ccApproachEmblaBound = true;
+
+			const viewport = component.querySelector(".approach-slider_track");
+			const prevBtn = component.querySelector(".controls-arrow.is-prev");
+			const nextBtn = component.querySelector(".controls-arrow.is-next");
+
+			if (!viewport) return;
+
+			let embla = null;
+			let lastSelected = 0; // ✅ shared by syncLines + onIndexChange + reInit
+
+			function setArrowsEnabled() {
+				if (!embla) return;
+
+				const canPrev = embla.canScrollPrev();
+				const canNext = embla.canScrollNext();
+
+				if (prevBtn) prevBtn.disabled = !canPrev;
+				if (nextBtn) nextBtn.disabled = !canNext;
+
+				if (prevBtn) prevBtn.classList.toggle("is-disabled", !canPrev);
+				if (nextBtn) nextBtn.classList.toggle("is-disabled", !canNext);
+			}
+
+			// --- DrawSVG line animation per active slide ---
+			function getLine(slideEl) {
+				return slideEl?.querySelector?.(".approach-card_line.is-2") || null;
+			}
+
+			function initLine(lineEl) {
+				if (!lineEl) return;
+				if (lineEl.dataset.ccLineInit === "1") return;
+
+				lineEl.dataset.ccLineInit = "1";
+				gsap.set(lineEl, {
+					transformOrigin: "0% 50%",
+					scaleX: 0,
+				});
+			}
+
+			function setLine(lineEl, filled) {
+				if (!lineEl) return;
+				initLine(lineEl);
+				gsap.set(lineEl, { scaleX: filled ? 1 : 0, overwrite: false });
+			}
+
+			function animateLineTo(lineEl, filled, opts = {}) {
+				if (!lineEl) return;
+				initLine(lineEl);
+
+				const { duration = 0.6, ease = "power2.out" } = opts;
+
+				gsap.killTweensOf(lineEl);
+
+				// For filling we prefer a deterministic 0 -> 1 animation.
+				// For un-filling we tween back to 0.
+				if (filled) {
+					gsap.fromTo(
+						lineEl,
+						{ scaleX: 0 },
+						{
+							scaleX: 1,
+							duration,
+							ease,
+							overwrite: "auto",
+						}
+					);
+				} else {
+					gsap.to(lineEl, {
+						scaleX: 0,
+						duration: Math.min(0.45, duration),
+						ease: "power2.inOut",
+						overwrite: "auto",
+					});
+				}
+			}
+
+			function syncLines({ animateActive = false, animateReverse = false } = {}) {
+				if (!embla) return;
+
+				const slides = embla.slideNodes();
+				const selected = embla.selectedScrollSnap();
+
+				// Ensure all lines are initialized (prevents “last slide never animates” due to missing init)
+				slides.forEach((slideEl) => initLine(getLine(slideEl)));
+
+				// Preceding slides: end state visible
+				for (let i = 0; i < selected; i++) setLine(getLine(slides[i]), true);
+
+				// Following slides: hidden (optionally animate when reversing)
+				for (let i = selected + 1; i < slides.length; i++) {
+					const line = getLine(slides[i]);
+					if (!line) continue;
+
+					if (animateReverse && i <= lastSelected) animateLineTo(line, false);
+					else setLine(line, false);
+				}
+
+				// Active slide: animate to visible if requested, else just ensure visible
+				const activeLine = getLine(slides[selected]);
+				if (activeLine) {
+					if (animateActive) animateLineTo(activeLine, true);
+					else setLine(activeLine, true);
+				}
+
+				lastSelected = selected;
+			}
+
+			function init() {
+				if (embla) return;
+
+				embla = EmblaCarousel(viewport, OPTIONS);
+
+				// Wire arrows
+				if (prevBtn) prevBtn.addEventListener("click", () => embla && embla.scrollPrev());
+				if (nextBtn) nextBtn.addEventListener("click", () => embla && embla.scrollNext());
+
+				embla.on("init", () => {
+					setArrowsEnabled();
+					// Initial state:
+					// - slides before active: filled
+					// - active: filled (no animation on load)
+					// - after: empty
+					syncLines({ animateActive: false, animateReverse: false });
+				});
+
+				embla.on("reInit", () => {
+					setArrowsEnabled();
+					// Re-sync without replaying everything
+					lastSelected = embla.selectedScrollSnap() || 0;
+					syncLines({ animateActive: false, animateReverse: false });
+				});
+
+				const onIndexChange = () => {
+					if (!embla) return;
+
+					setArrowsEnabled();
+
+					const nextSelected = embla.selectedScrollSnap();
+
+					// Prevent the "select + settle" double-fire from re-triggering animations
+					if (nextSelected === lastSelected) return;
+
+					const isForward = nextSelected > lastSelected;
+
+					syncLines({
+						animateActive: isForward, // ✅ only forward animates active
+						animateReverse: !isForward, // ✅ only backward reverses
+					});
+
+					// lastSelected is updated inside syncLines at the end,
+					// but it's fine to also update here if you prefer:
+					// lastSelected = nextSelected;
+				};
+
+				embla.on("select", onIndexChange);
+				embla.on("settle", onIndexChange);
+
+				// In case init events fire before we attach handlers
+				setArrowsEnabled();
+				syncLines({ animateActive: false, animateReverse: false });
+			}
+
+			init();
 		});
 	}
 
@@ -455,6 +656,386 @@ Ref: Studio Everywhere / Releaf.bio
 
 		// Initial run
 		updateMainSlideStates();
+	}
+
+	function caseStudiesSimpleCarousel() {
+		const log = (...args) => console.log("[clearclick][cscSimple]", ...args);
+		const warn = (...args) => console.warn("[clearclick][cscSimple]", ...args);
+
+		if (typeof gsap === "undefined") {
+			return;
+		}
+
+		const prefersReduced =
+			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+		const components = Array.from(document.querySelectorAll(".c-csc-simple"));
+		if (!components.length) return;
+
+		function getSlideMedia(slideEl) {
+			return slideEl?.querySelector?.(".csc-simple-slide_media") || null;
+		}
+
+		function getSlideContentElements(slideEl) {
+			if (!slideEl) return [];
+			const header = slideEl.querySelector(".csc-simple-card_header");
+			const quote = slideEl.querySelector(".csc-simple-card_quote");
+			const author = slideEl.querySelector(".c-author");
+			const stats = Array.from(slideEl.querySelectorAll(".c-csc-simple-stat"));
+			return [header, quote, author, ...stats].filter(Boolean);
+		}
+
+		function setA11y(slides, activeIndex) {
+			slides.forEach((slide, i) => {
+				const isActive = i === activeIndex;
+				slide.setAttribute("aria-hidden", isActive ? "false" : "true");
+				// Stop tabbing into hidden slides (links/buttons inside)
+				slide.querySelectorAll("a, button, input, textarea, select, [tabindex]").forEach((el) => {
+					// Preserve author-set tabindex if you have any
+					if (!el._ccPrevTabindex) el._ccPrevTabindex = el.getAttribute("tabindex");
+					if (isActive) {
+						if (el._ccPrevTabindex === null) el.removeAttribute("tabindex");
+						else el.setAttribute("tabindex", el._ccPrevTabindex);
+					} else {
+						el.setAttribute("tabindex", "-1");
+					}
+				});
+			});
+		}
+
+		components.forEach((component, idx) => {
+			// --- safe re-init cleanup ---
+			if (component._ccCscSimpleAbort) {
+				component._ccCscSimpleAbort.abort();
+				component._ccCscSimpleAbort = null;
+			}
+			if (component._ccCscSimpleTl) {
+				component._ccCscSimpleTl.kill();
+				component._ccCscSimpleTl = null;
+			}
+
+			const abort = new AbortController();
+			component._ccCscSimpleAbort = abort;
+
+			component.classList.add("cc-ready");
+
+			const viewport = component.querySelector(".csc-simple_list-wrapper");
+			if (!viewport) {
+				return;
+			}
+
+			const container = viewport.querySelector(".csc-simple_list");
+			if (!container) {
+				return;
+			}
+
+			const slides = Array.from(container.querySelectorAll(".c-csc-simple-slide"));
+			if (!slides.length) return;
+
+			// Controls
+			const prevBtn = component.querySelector(".csc-simple_controls .controls-arrow.is-prev");
+			const nextBtn = component.querySelector(".csc-simple_controls .controls-arrow.is-next");
+
+			// If only 1 slide, disable arrows and bail early
+			if (slides.length < 2) {
+				if (prevBtn) prevBtn.classList.add("is-disabled");
+				if (nextBtn) nextBtn.classList.add("is-disabled");
+				return;
+			}
+
+			slides.forEach((slide) => {
+				if (getComputedStyle(slide).display === "none") slide.style.display = "grid";
+			});
+
+			slides.forEach((slide) => {
+				slide.style.position = "relative";
+				slide.style.zIndex = "0";
+			});
+
+			// --- initial state ---
+			const state = component._ccCscSimpleState || { index: 0 };
+			component._ccCscSimpleState = state;
+
+			// If previous state index is out of bounds (CMS changes), clamp it
+			state.index = Math.max(0, Math.min(state.index, slides.length - 1));
+
+			// Base hide all slides
+			gsap.killTweensOf(slides);
+			gsap.set(slides, { autoAlpha: 0, pointerEvents: "none" });
+
+			// Hide per-slide bits too (prevents flash during overlap)
+			slides.forEach((slide, i) => {
+				const media = getSlideMedia(slide);
+				const content = getSlideContentElements(slide);
+				if (media) gsap.set(media, { autoAlpha: i === state.index ? 1 : 0 });
+				if (content.length) gsap.set(content, { autoAlpha: i === state.index ? 1 : 0, y: 0 });
+			});
+
+			// Show active wrapper
+			gsap.set(slides[state.index], { autoAlpha: 1, pointerEvents: "auto", zIndex: 1 });
+			setA11y(slides, state.index);
+
+			function flushInFlightTransition() {
+				const tl = component._ccCscSimpleTl;
+				if (!tl) return false;
+
+				// Force the previous transition to its end state so `state.index`
+				// stays correct even when users click rapidly.
+				try {
+					if (typeof tl.progress === "function") tl.progress(1);
+				} catch (e) {}
+
+				try {
+					tl.kill();
+				} catch (e) {}
+
+				component._ccCscSimpleTl = null;
+				return true;
+			}
+
+			function goTo(nextIndex) {
+				if (!Number.isFinite(nextIndex)) return;
+				flushInFlightTransition();
+
+				const fromIndex = state.index;
+				const toIndex = ((nextIndex % slides.length) + slides.length) % slides.length; // wrap
+
+				if (toIndex === fromIndex) return;
+
+				const fromSlide = slides[fromIndex];
+				const toSlide = slides[toIndex];
+
+				const fromMedia = getSlideMedia(fromSlide);
+				const toMedia = getSlideMedia(toSlide);
+
+				const fromContent = getSlideContentElements(fromSlide);
+				const toContent = getSlideContentElements(toSlide);
+
+				// Kill any in-flight tweens for these elements
+				if (fromMedia) gsap.killTweensOf(fromMedia);
+				if (toMedia) gsap.killTweensOf(toMedia);
+				if (fromContent.length) gsap.killTweensOf(fromContent);
+				if (toContent.length) gsap.killTweensOf(toContent);
+
+				// Reduced motion: instant switch
+				if (prefersReduced) {
+					// Keep stacking order deterministic
+					slides.forEach((s) => (s.style.zIndex = "0"));
+					toSlide.style.zIndex = "1";
+
+					gsap.set(fromSlide, { autoAlpha: 0, pointerEvents: "none" });
+					if (fromMedia) gsap.set(fromMedia, { autoAlpha: 0 });
+					if (fromContent.length) gsap.set(fromContent, { autoAlpha: 0, y: 0 });
+
+					gsap.set(toSlide, { autoAlpha: 1, pointerEvents: "auto" });
+					if (toMedia) gsap.set(toMedia, { autoAlpha: 1 });
+					if (toContent.length) gsap.set(toContent, { autoAlpha: 1, y: 0 });
+
+					state.index = toIndex;
+					setA11y(slides, state.index);
+					return;
+				}
+
+				// Make sure the incoming slide wrapper is visible immediately (for overlap)
+				// Ensure correct layering for stacked slides.
+				slides.forEach((s) => (s.style.zIndex = "0"));
+				fromSlide.style.zIndex = "1";
+				toSlide.style.zIndex = "2";
+
+				gsap.set(toSlide, { autoAlpha: 1, pointerEvents: "auto" });
+
+				// Prep incoming elements
+				if (toMedia) gsap.set(toMedia, { autoAlpha: 0 });
+				if (toContent.length) gsap.set(toContent, { autoAlpha: 0, y: 0 });
+
+				const tl = gsap.timeline({
+					defaults: { ease: "power2.out" },
+					onComplete: () => {
+						// fully hide outgoing slide wrapper at the end
+						gsap.set(fromSlide, { autoAlpha: 0, pointerEvents: "none" });
+						fromSlide.style.zIndex = "0";
+						toSlide.style.zIndex = "1";
+						state.index = toIndex;
+						setA11y(slides, state.index);
+					},
+				});
+
+				// --- content out  ---
+				if (fromContent.length) {
+					tl.to(
+						fromContent,
+						{
+							autoAlpha: 0,
+							duration: 0.22,
+							stagger: 0.03,
+							overwrite: "auto",
+						},
+						0
+					);
+				}
+
+				// --- media crossfade  ---
+				if (fromMedia) {
+					tl.to(
+						fromMedia,
+						{
+							autoAlpha: 0,
+							duration: 0.55,
+							overwrite: "auto",
+						},
+						0
+					);
+				}
+				if (toMedia) {
+					tl.to(
+						toMedia,
+						{
+							autoAlpha: 1,
+							duration: 0.55,
+							overwrite: "auto",
+						},
+						0.06
+					);
+				}
+
+				// --- content in  ---
+				if (toContent.length) {
+					tl.to(
+						toContent,
+						{
+							autoAlpha: 1,
+							duration: 0.28,
+							stagger: 0.06,
+							overwrite: "auto",
+						},
+						0.18
+					);
+				}
+
+				component._ccCscSimpleTl = tl;
+			}
+
+			function prev() {
+				flushInFlightTransition();
+				goTo(state.index - 1);
+			}
+			function next() {
+				flushInFlightTransition();
+				goTo(state.index + 1);
+			}
+
+			if (prevBtn) {
+				prevBtn.addEventListener("click", prev, { signal: abort.signal });
+			}
+			if (nextBtn) {
+				nextBtn.addEventListener("click", next, { signal: abort.signal });
+			}
+
+			// Optional: keyboard control when focused inside component
+			component.addEventListener(
+				"keydown",
+				(e) => {
+					if (e.key === "ArrowLeft") prev();
+					if (e.key === "ArrowRight") next();
+				},
+				{ signal: abort.signal }
+			);
+
+			log("Initialized component", idx, "slides:", slides.length, "start index:", state.index);
+		});
+	}
+
+	function solsCarousel() {
+		if (typeof EmblaCarousel === "undefined") {
+			console.warn("[clearclick] EmblaCarousel not found, skipping solsCarousel()");
+			return;
+		}
+
+		const components = Array.from(document.querySelectorAll(".c-sols-carousel"));
+		if (!components.length) return;
+
+		const OPTIONS = {
+			align: "start",
+			loop: true,
+			skipSnaps: false,
+			duration: 14,
+		};
+
+		components.forEach((component) => {
+			const viewport = component.querySelector(".sols-carousel_list-wrap.embla");
+			if (!viewport) return;
+
+			// Safe re-init (CMS rerenders)
+			if (component._ccSolsEmbla) {
+				try {
+					component._ccSolsEmbla.destroy();
+				} catch (e) {}
+				component._ccSolsEmbla = null;
+			}
+			if (component._ccSolsAbort) {
+				component._ccSolsAbort.abort();
+				component._ccSolsAbort = null;
+			}
+
+			const prevBtn = component.querySelector(".sols-carousel_controls .controls-arrow.is-prev");
+			const nextBtn = component.querySelector(".sols-carousel_controls .controls-arrow.is-next");
+
+			const embla = EmblaCarousel(viewport, OPTIONS);
+			component._ccSolsEmbla = embla;
+
+			const abort = new AbortController();
+			component._ccSolsAbort = abort;
+
+			function setArrowsEnabled() {
+				if (!embla) return;
+				const canPrev = embla.canScrollPrev();
+				const canNext = embla.canScrollNext();
+
+				if (prevBtn) prevBtn.disabled = !canPrev;
+				if (nextBtn) nextBtn.disabled = !canNext;
+
+				if (prevBtn) prevBtn.classList.toggle("is-disabled", !canPrev);
+				if (nextBtn) nextBtn.classList.toggle("is-disabled", !canNext);
+			}
+
+			if (prevBtn) {
+				prevBtn.addEventListener(
+					"click",
+					() => {
+						embla.scrollPrev();
+					},
+					{ signal: abort.signal }
+				);
+			}
+			if (nextBtn) {
+				nextBtn.addEventListener(
+					"click",
+					() => {
+						embla.scrollNext();
+					},
+					{ signal: abort.signal }
+				);
+			}
+
+			embla.on("init", setArrowsEnabled);
+			embla.on("reInit", setArrowsEnabled);
+			embla.on("select", setArrowsEnabled);
+			setArrowsEnabled();
+
+			// Service list expansion changes slide heights; refresh Embla after the expand animation.
+			component.addEventListener(
+				"click",
+				(e) => {
+					if (!e.target.closest(".sol-card_services-more")) return;
+					setTimeout(() => {
+						try {
+							embla.reInit();
+						} catch (err) {}
+					}, 650);
+				},
+				{ signal: abort.signal }
+			);
+		});
 	}
 
 	function orbit() {
@@ -887,6 +1468,9 @@ Ref: Studio Everywhere / Releaf.bio
 							debounce(() => {
 								initAllTabs();
 								initScrollReveals();
+								caseStudiesSimpleCarousel();
+								solsCarousel();
+								expandSolutionServiceTags();
 							}, 0)
 						);
 					}
@@ -898,6 +1482,9 @@ Ref: Studio Everywhere / Releaf.bio
 							debounce(() => {
 								initAllTabs();
 								initScrollReveals();
+								caseStudiesSimpleCarousel();
+								solsCarousel();
+								expandSolutionServiceTags();
 							}, 0)
 						);
 					}
@@ -906,6 +1493,9 @@ Ref: Studio Everywhere / Releaf.bio
 				// run once when FS list is ready
 				initAllTabs();
 				initScrollReveals();
+				caseStudiesSimpleCarousel();
+				solsCarousel();
+				expandSolutionServiceTags();
 			},
 		]);
 	}
@@ -1573,11 +2163,14 @@ Ref: Studio Everywhere / Releaf.bio
 		}
 
 		const hasFlip = typeof Flip !== "undefined" && typeof Flip.getState === "function";
-		const solCards = Array.from(document.querySelectorAll(".sol-card"));
+		const solCards = Array.from(document.querySelectorAll(".sol-card, .sols-carousel-slide"));
 		if (!solCards.length) return;
 
 		function getTagsList(card) {
-			return card.querySelector(".sol-card_services-list");
+			return (
+				card.querySelector(".sol-card_services-list") ||
+				card.querySelector(".sols-carousel-slide_services-list")
+			);
 		}
 
 		function getMoreBtn(tagsList) {
@@ -1945,7 +2538,10 @@ Ref: Studio Everywhere / Releaf.bio
 	navDropdowns();
 	logoStaggers();
 	latestCarousel();
+	approachSliderCarousel();
 	caseStudiesCarousel();
+	caseStudiesSimpleCarousel();
+	solsCarousel();
 	orbit();
 	initScrollReveals();
 	expandSolutionServiceTags();
