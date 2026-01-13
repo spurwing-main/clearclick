@@ -945,6 +945,40 @@ Ref: Studio Everywhere / Releaf.bio
 		});
 	}
 
+	function introStatsCarousel() {
+		if (typeof EmblaCarousel === "undefined") {
+			console.warn("[clearclick] EmblaCarousel not found, skipping introStatsCarousel()");
+			return;
+		}
+
+		// set up embla carousel based on .intro-with-stats_stats.embla, .intro-with-stats_stats-list.embla__container, .c-stat.embla__slide. No loop, no arrows, free drag
+		const components = Array.from(document.querySelectorAll(".c-intro-with-stats"));
+		if (!components.length) return;
+
+		const OPTIONS = {
+			align: "start",
+			loop: false,
+			dragFree: true,
+			containScroll: "trimSnaps",
+		};
+
+		components.forEach((component) => {
+			const viewport = component.querySelector(".intro-with-stats_stats.embla");
+			if (!viewport) return;
+
+			// Safe re-init (CMS rerenders)
+			if (component._ccIntroStatsEmbla) {
+				try {
+					component._ccIntroStatsEmbla.destroy();
+				} catch (e) {}
+				component._ccIntroStatsEmbla = null;
+			}
+
+			const embla = EmblaCarousel(viewport, OPTIONS);
+			component._ccIntroStatsEmbla = embla;
+		});
+	}
+
 	function solsCarousel() {
 		if (typeof EmblaCarousel === "undefined") {
 			console.warn("[clearclick] EmblaCarousel not found, skipping solsCarousel()");
@@ -2538,6 +2572,7 @@ Ref: Studio Everywhere / Releaf.bio
 	navDropdowns();
 	logoStaggers();
 	latestCarousel();
+	introStatsCarousel();
 	approachSliderCarousel();
 	caseStudiesCarousel();
 	caseStudiesSimpleCarousel();
