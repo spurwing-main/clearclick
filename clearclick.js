@@ -570,16 +570,24 @@ function main() {
 
 		// --- Embla options ---
 		const MAIN_OPTIONS = {
-			align: "start",
+			align: "center",
 			loop: true,
 			duration: 12,
 		};
 
-		const THUMB_OPTIONS = {
+		// Thumb strip: only enable looping when it actually overflows.
+		// When it does not overflow we don't initialize Embla at all (CSS centers it).
+		const THUMB_OPTIONS_NO_OVERFLOW = {
+			align: "center",
+			loop: false,
+			dragFree: true,
+			containScroll: "trimSnaps",
+			duration: 12,
+		};
+		const THUMB_OPTIONS_OVERFLOW = {
 			align: "center",
 			loop: true,
 			dragFree: true,
-			containScroll: "keepSnaps",
 			duration: 12,
 		};
 
@@ -625,45 +633,90 @@ function main() {
 				thumbSlide.className = "csc_logo-slide embla__slide";
 				thumbSlide.dataset.index = index;
 
-				// Move (not clone) the button
-				thumbSlide.appendChild(logoBtn);
+				// Clone the button so we don't mutate the main slide DOM.
+				// (Moving it can cause weird layout/measure issues and makes re-init harder.)
+				thumbSlide.appendChild(logoBtn.cloneNode(true));
 
 				thumbContainer.appendChild(thumbSlide);
 			});
 		}
 
-		function updateThumbLayout() {
+		let emblaThumb = null;
+		let thumbHasOverflow = null;
+		let thumbLoopEnabled = null;
+		let layoutRaf = 0;
+		let ro = null;
+
+		function getThumbSlides() {
+			return emblaThumb ? emblaThumb.slideNodes() : Array.from(thumbContainer.children);
+		}
+
+		function measureThumbOverflow() {
 			const viewportWidth = thumbViewport.clientWidth;
 			const trackWidth = thumbContainer.scrollWidth;
+			// Add a small buffer for rounding/font/image load jitter.
+			return trackWidth > viewportWidth + 2;
+		}
 
-			const hasOverflow = trackWidth > viewportWidth + 1;
+		function initThumbEmblaIfNeeded({ loop } = {}) {
+			const desiredLoop = !!loop;
+			if (emblaThumb) {
+				// If loop mode changed (overflow state flipped), rebuild.
+				if (thumbLoopEnabled !== desiredLoop) {
+					destroyThumbEmblaIfNeeded();
+				} else {
+					return;
+				}
+			}
 
-			const shouldCenter = !hasOverflow;
+			emblaThumb = EmblaCarousel(
+				thumbViewport,
+				desiredLoop ? THUMB_OPTIONS_OVERFLOW : THUMB_OPTIONS_NO_OVERFLOW
+			);
+			thumbLoopEnabled = desiredLoop;
+		}
+
+		function destroyThumbEmblaIfNeeded() {
+			if (!emblaThumb) return;
+			try {
+				emblaThumb.destroy();
+			} catch (e) {}
+			emblaThumb = null;
+			thumbLoopEnabled = null;
+			// Ensure we don't keep an old transform around when switching to CSS centering.
+			thumbContainer.style.transform = "translate3d(0px, 0px, 0px)";
+		}
+
+		function applyThumbMode() {
+			const hasOverflow = measureThumbOverflow();
+			thumbHasOverflow = hasOverflow;
 
 			thumbRoot.classList.toggle("has-overflow", hasOverflow);
-			thumbRoot.classList.toggle("is-centered", shouldCenter);
+			thumbRoot.classList.toggle("is-centered", !hasOverflow);
 
-			if (shouldCenter) {
-				// Lock the carousel
-				emblaThumb.scrollTo(0, true);
-				emblaThumb.internalEngine().options.dragFree = false;
+			if (hasOverflow) {
+				initThumbEmblaIfNeeded({ loop: true });
 			} else {
-				// Restore normal behaviour
-				emblaThumb.internalEngine().options.dragFree = true;
+				destroyThumbEmblaIfNeeded();
 			}
+		}
+
+		function scheduleThumbLayout() {
+			if (layoutRaf) cancelAnimationFrame(layoutRaf);
+			layoutRaf = requestAnimationFrame(() => {
+				layoutRaf = 0;
+				applyThumbMode();
+				syncThumbs();
+			});
 		}
 
 		buildThumbs();
 
-		// --- Init thumb Embla AFTER DOM is built ---
-		const emblaThumb = EmblaCarousel(thumbViewport, THUMB_OPTIONS);
-
-		const thumbSlides = emblaThumb.slideNodes();
-
 		// --- Click thumbs → move main ---
-		thumbSlides.forEach((slide, index) => {
+		getThumbSlides().forEach((slide) => {
 			slide.addEventListener("click", () => {
-				emblaMain.scrollTo(index);
+				const idx = Number(slide.dataset.index);
+				emblaMain.scrollTo(Number.isFinite(idx) ? idx : 0);
 			});
 		});
 
@@ -671,11 +724,12 @@ function main() {
 		function syncThumbs() {
 			const selected = emblaMain.selectedScrollSnap();
 
-			thumbSlides.forEach((slide, i) => {
+			const slides = getThumbSlides();
+			slides.forEach((slide, i) => {
 				slide.classList.toggle("is-active", i === selected);
 			});
 
-			if (!thumbRoot.classList.contains("is-centered")) {
+			if (emblaThumb && thumbHasOverflow) {
 				emblaThumb.scrollTo(selected);
 			}
 		}
@@ -693,14 +747,24 @@ function main() {
 		}
 
 		emblaMain.on("select", syncThumbs);
-		emblaThumb.on("init", syncThumbs);
 
-		// Initial sync
+		// Layout: images often load after init which changes scrollWidth.
+		// Use ResizeObserver where possible, and always run a couple of delayed passes.
+		applyThumbMode();
 		syncThumbs();
 
-		emblaThumb.on("init", updateThumbLayout);
-		emblaThumb.on("reInit", updateThumbLayout);
-		window.addEventListener("resize", updateThumbLayout);
+		if (typeof ResizeObserver !== "undefined") {
+			ro = new ResizeObserver(() => scheduleThumbLayout());
+			try {
+				ro.observe(thumbViewport);
+				ro.observe(thumbContainer);
+			} catch (e) {}
+		}
+
+		window.addEventListener("resize", scheduleThumbLayout);
+		setTimeout(scheduleThumbLayout, 0);
+		setTimeout(scheduleThumbLayout, 250);
+		setTimeout(scheduleThumbLayout, 1000);
 
 		emblaMain.on("init", updateMainSlideStates);
 		emblaMain.on("select", updateMainSlideStates);
