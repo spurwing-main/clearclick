@@ -1782,7 +1782,9 @@ function main() {
 				dd.classList.remove("is-open", "nav_dd--debug-open");
 
 				const data = dd._ccNavDd;
-				if (data?.tl) data.tl.reverse();
+				// ✅ prefer custom close when available; fallback to reverse
+				if (typeof data?.close === "function") data.close();
+				else if (data?.tl) data.tl.reverse();
 			});
 		}
 
@@ -1811,6 +1813,7 @@ function main() {
 
 				// kill any prior timeline
 				if (dd._ccNavDd?.tl) dd._ccNavDd.tl.kill();
+				if (dd._ccNavDd?._closeTween) dd._ccNavDd._closeTween.kill();
 
 				// Closed baseline
 				gsap.set(list, { display: "none" });
@@ -1820,9 +1823,6 @@ function main() {
 				const tl = gsap.timeline({
 					paused: true,
 					defaults: { ease: "power1.out" },
-					onReverseComplete: () => {
-						gsap.set(list, { display: "none" });
-					},
 				});
 
 				// Open: ensure list is visible, then animate bg + links
@@ -1847,12 +1847,54 @@ function main() {
 					);
 				}
 
-				dd._ccNavDd = { tl, mode: "desktop" };
+				dd._ccNavDd = {
+					tl,
+					mode: "desktop",
+					_closeTween: null,
+					// ✅ close in a fixed duration (ignores long stagger reverse)
+					close: () => {
+						const data = dd._ccNavDd;
+						if (!data?.tl) return;
+
+						// Kill any in-flight close tween
+						if (data._closeTween) {
+							data._closeTween.kill();
+							data._closeTween = null;
+						}
+
+						// If already closed, ensure display none and bail
+						if (data.tl.time() === 0) {
+							gsap.set(list, { display: "none" });
+							data.tl.pause(0);
+							return;
+						}
+
+						data._closeTween = data.tl.tweenTo(0, {
+							duration: 0.18, // tweak close speed here
+							ease: "power1.out",
+							overwrite: "auto",
+							onComplete: () => {
+								gsap.set(list, { display: "none" });
+								data.tl.pause(0); // ✅ ensure next hover can restart cleanly
+								if (dd._ccNavDd) dd._ccNavDd._closeTween = null;
+							},
+						});
+					},
+				};
 
 				const onEnter = () => {
 					closeAll(dd);
+
 					dd.classList.add("is-open");
-					tl.play(0);
+
+					// If a fast-close tween is running, cancel it so open feels immediate
+					if (dd._ccNavDd?._closeTween) {
+						dd._ccNavDd._closeTween.kill();
+						dd._ccNavDd._closeTween = null;
+					}
+
+					gsap.set(list, { display: "block" }); // ✅ ensure visible even if last close forced display:none
+					tl.play(0); // ✅ always render from 0 (fires the 0-time set reliably)
 				};
 
 				const onLeave = () => {
@@ -1860,7 +1902,7 @@ function main() {
 					if (keepOpen) return;
 
 					dd.classList.remove("is-open", "nav_dd--debug-open");
-					tl.reverse();
+					dd._ccNavDd?.close?.();
 				};
 
 				addListener(dd, "pointerenter", onEnter, unsubs);
@@ -1869,6 +1911,7 @@ function main() {
 				// If debug pinned, open immediately and mark it
 				if (keepOpen) {
 					dd.classList.add("is-open", "nav_dd--debug-open");
+					gsap.set(list, { display: "block" });
 					tl.play(0);
 				}
 			});
@@ -1878,6 +1921,7 @@ function main() {
 				dropdowns.forEach((dd) => {
 					dd.classList.remove("is-open", "nav_dd--debug-open");
 					if (dd._ccNavDd?.mode === "desktop") {
+						dd._ccNavDd._closeTween?.kill();
 						dd._ccNavDd.tl?.kill();
 						delete dd._ccNavDd;
 					}
@@ -1918,7 +1962,17 @@ function main() {
 					tl.to(links, { autoAlpha: 1, duration: 0.2, stagger: 0.05, ease: "power1.out" }, 0.05);
 				}
 
-				dd._ccNavDd = { tl, mode: "mobile" };
+				dd._ccNavDd = {
+					tl,
+					mode: "mobile",
+					// Mobile should behave like an accordion: reverse the timeline normally.
+					close: () => {
+						const data = dd._ccNavDd;
+						if (!data?.tl) return;
+						data.tl.timeScale(1);
+						data.tl.reverse();
+					},
+				};
 
 				const onClick = (e) => {
 					if (toggle.tagName === "A") e.preventDefault();
@@ -1927,17 +1981,18 @@ function main() {
 
 					if (isOpen) {
 						dd.classList.remove("is-open");
-						tl.reverse();
+						dd._ccNavDd?.close?.();
 					} else {
-						// mobile stays normal (no debug pin here)
+						// close others
 						dropdowns.forEach((other) => {
 							if (other === dd) return;
 							other.classList.remove("is-open");
-							other._ccNavDd?.tl?.reverse();
+							other._ccNavDd?.close?.();
 						});
 
 						dd.classList.add("is-open");
-						tl.play(0);
+
+						tl.play(0); // ✅ deterministic open (esp. after fast close)
 					}
 				};
 
