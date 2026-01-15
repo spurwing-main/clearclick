@@ -1265,66 +1265,85 @@ function main() {
 	}
 
 	function orbit() {
+		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
+
 		const component = document.querySelector(".c-process");
 		if (!component) return;
 
-		const triggerEl = component.querySelector(".process_main");
+		const stickyEl = component.querySelector(".process_main");
+		if (!stickyEl) return;
+
+		// Spacer element you added (e.g. height: 400svh)
+		const spacerEl = component.querySelector(".process_h");
+		if (!spacerEl) {
+			console.warn(
+				"[clearclick][orbit] .process_h not found; sticky orbit needs a spacer element."
+			);
+			return;
+		}
 
 		const orbitEl = component.querySelector(".c-orbit");
-
-		const cards = gsap.utils.toArray(".orbit-card");
-		const ring = document.querySelector(".orbit_ring-progress");
-		const pulse = document.querySelector(".orbit_ring-pulse");
-
 		const track = component.querySelector(".orbit_cards");
 
-		// kill existing ScrollTriggers on this trigger
-		ScrollTrigger.getAll().forEach((st) => {
-			if (st.trigger === triggerEl) st.kill();
-		});
-		gsap.killTweensOf([cards, ring, pulse, track]);
+		// Scope queries to this component (avoids collisions if multiple exist)
+		const cards = gsap.utils.toArray(component.querySelectorAll(".orbit-card"));
+		const ring = component.querySelector(".orbit_ring-progress");
+		const pulse = component.querySelector(".orbit_ring-pulse");
 
-		ScrollTrigger.matchMedia({
-			// Only run the pinned desktop orbit when the viewport is tall enough
-			"(min-width: 992px) and (min-height: 640px)": () => {
-				gsap.set(cards, {
-					opacity: 0,
-				});
+		// ---- safe re-init cleanup ----
+		if (orbit._mm) {
+			try {
+				orbit._mm.kill();
+			} catch (e) {}
+			orbit._mm = null;
+		}
+		const old = ScrollTrigger.getById("ccOrbitSticky");
+		if (old) old.kill();
 
-				gsap.set(ring, {
-					drawSVG: "0%",
-					rotate: -90,
-					transformOrigin: "50% 50%",
-				});
-				gsap.set(pulse, {
-					opacity: 0,
-					transformOrigin: "50% 50%",
-				});
+		gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
 
-				const tl = gsap.timeline({
-					scrollTrigger: {
-						trigger: triggerEl,
-						start: "top top",
-						end: () => `+=${cards.length * window.innerHeight * 0.5}`,
-						pin: true,
-						anticipatePin: 1,
-						scrub: 1,
+		// Common baselines
+		gsap.set(cards, { clearProps: "transform" });
+		if (ring) {
+			gsap.set(ring, {
+				drawSVG: "0%",
+				rotate: -90,
+				transformOrigin: "50% 50%",
+			});
+		}
+		if (pulse) gsap.set(pulse, { opacity: 0, transformOrigin: "50% 50%" });
+
+		const mm = gsap.matchMedia();
+		orbit._mm = mm;
+
+		// Desktop tall enough: scrub the sequence while CSS sticky holds the element
+		mm.add("(min-width: 992px) and (min-height: 640px)", () => {
+			gsap.set(cards, { opacity: 0 });
+
+			const tl = gsap.timeline({
+				scrollTrigger: {
+					id: "ccOrbitSticky",
+					trigger: spacerEl,
+					start: "top bottom",
+					end: "bottom bottom", // full spacer scroll distance
+					scrub: 1,
+					invalidateOnRefresh: true,
+					// markers: true,
+				},
+			});
+
+			cards.forEach((card, i) => {
+				tl.to(
+					card,
+					{
+						opacity: 1,
+						duration: 1.5,
+						ease: "power2.out",
 					},
-				});
+					">"
+				);
 
-				cards.forEach((card, i) => {
-					// Card in
-					tl.to(
-						card,
-						{
-							opacity: 1,
-							duration: 1.5,
-							ease: "power2.out",
-						},
-						">"
-					);
-
-					// Ring draw
+				if (ring) {
 					tl.to(
 						ring,
 						{
@@ -1334,113 +1353,79 @@ function main() {
 						},
 						"<"
 					);
-				});
+				}
+			});
 
-				const tlPulse = gsap.timeline({
-					// little timeline for pulse that's independent of scroll and called once when main tl completes
-					paused: true,
-					onComplete: () => {
-						gsap.set(ring, {
-							scale: 1,
-							opacity: 1,
-							drawSVG: "0%",
-						});
-					},
-				});
+			return () => {
+				tl.scrollTrigger?.kill();
+				tl.kill();
+			};
+		});
 
-				tlPulse.to(ring, {
-					scale: 1.3,
-					opacity: 0,
-					duration: 0.4,
-					ease: "power2.out",
-				});
+		// Desktop short height: no sticky/pin behavior—just show end-state
+		mm.add("(min-width: 992px) and (max-height: 639px)", () => {
+			gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
 
-				tl.eventCallback("onComplete", () => {
-					tlPulse.restart();
-				});
+			gsap.set(cards, { opacity: 1, clearProps: "transform" });
+			if (track) gsap.set(track, { clearProps: "transform" });
 
-				return () => {
-					tl.scrollTrigger?.kill();
-					tl.kill();
-					tlPulse.kill();
-				};
-			},
-
-			// Desktop width, but short height: avoid pin/cropping and show content normally
-			"(min-width: 992px) and (max-height: 639px)": () => {
-				// Ensure everything is visible and not mid-animation if the user resized into this state
-				gsap.killTweensOf([cards, ring, pulse, track]);
-				gsap.set(cards, { opacity: 1, clearProps: "transform" });
-				gsap.set(track, { clearProps: "transform" });
+			if (ring) {
 				gsap.set(ring, {
 					rotate: -90,
 					transformOrigin: "50% 50%",
 					drawSVG: "100%",
 					clearProps: "scale,opacity",
 				});
-				gsap.set(pulse, { opacity: 0, clearProps: "transform" });
+			}
+			if (pulse) gsap.set(pulse, { opacity: 0, clearProps: "transform" });
 
-				// No ScrollTrigger/pinning in this mode
-				return () => {
-					// leaving this mode: let other modes fully control styles
-					gsap.killTweensOf([cards, ring, pulse, track]);
-				};
-			},
+			return () => gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
+		});
 
-			"(max-width: 991px)": () => {
-				gsap.set(cards, {
-					opacity: 1,
-				});
-				gsap.set(ring, {
-					drawSVG: "0%",
-					rotate: -90,
-					transformOrigin: "50% 50%",
-				});
-				gsap.set(pulse, {
-					opacity: 0,
-					transformOrigin: "50% 50%",
-				});
+		// Mobile: same idea—scrub track x + ring draw, no pinning
+		mm.add("(max-width: 991px)", () => {
+			gsap.set(cards, { opacity: 1 });
 
-				const getGutter = () => {
-					// Optionally set via CSS: .c-orbit { --cc-orbit-gutter: 16px; }
-					const raw = getComputedStyle(orbitEl).getPropertyValue("--cc-orbit-gutter");
-					const g = parseFloat(raw || "");
-					return Number.isFinite(g) ? g : 16; // px fallback
-				};
+			const getGutter = () => {
+				if (!orbitEl) return 16;
+				const raw = getComputedStyle(orbitEl).getPropertyValue("--cc-orbit-gutter");
+				const g = parseFloat(raw || "");
+				return Number.isFinite(g) ? g : 16;
+			};
 
-				const getEndX = () => {
-					const containerW = orbitEl.getBoundingClientRect().width;
-					const overflow = track.scrollWidth - containerW;
-					const g = getGutter();
+			const getEndX = () => {
+				if (!orbitEl || !track) return 0;
+				const containerW = orbitEl.getBoundingClientRect().width;
+				const overflow = track.scrollWidth - containerW;
+				const g = getGutter();
+				if (overflow <= 0) return g;
+				return -overflow - g;
+			};
 
-					// If no overflow, just keep a left gutter and don't move
-					if (overflow <= 0) return g;
+			// Start with left gutter
+			if (track) gsap.set(track, { x: getGutter() });
 
-					// End with a right gutter too
-					return -overflow - g;
-				};
+			const tl = gsap.timeline({
+				scrollTrigger: {
+					id: "ccOrbitSticky",
+					trigger: spacerEl,
+					start: "top bottom",
+					end: "bottom bottom", // full spacer s
+					scrub: 1,
+					invalidateOnRefresh: true,
+					// markers: true,
+				},
+			});
 
-				// Start with left gutter
-				gsap.set(track, { x: getGutter() });
-
-				const tl = gsap.timeline({
-					scrollTrigger: {
-						trigger: triggerEl,
-						start: "top top",
-						end: () => `+=${cards.length * window.innerHeight * 0.5}`,
-						pin: true,
-						anticipatePin: 1,
-						scrub: 1,
-						invalidateOnRefresh: true, // ✅ recalc widths/gutter on refresh/resize
-					},
-				});
-
+			if (track) {
 				tl.to(track, {
 					x: () => getEndX(),
 					duration: 1,
 					ease: "none",
 				});
+			}
 
+			if (ring) {
 				tl.to(
 					ring,
 					{
@@ -1450,36 +1435,12 @@ function main() {
 					},
 					"0"
 				);
+			}
 
-				const tlPulse = gsap.timeline({
-					// little timeline for pulse that's independent of scroll and called once when main tl completes
-					paused: true,
-					onComplete: () => {
-						gsap.set(ring, {
-							scale: 1,
-							opacity: 1,
-							drawSVG: "0%",
-						});
-					},
-				});
-
-				tlPulse.to(ring, {
-					scale: 1.3,
-					opacity: 0,
-					duration: 0.4,
-					ease: "power2.out",
-				});
-
-				tl.eventCallback("onComplete", () => {
-					tlPulse.restart();
-				});
-
-				return () => {
-					tl.scrollTrigger?.kill();
-					tl.kill();
-					tlPulse.kill();
-				};
-			},
+			return () => {
+				tl.scrollTrigger?.kill();
+				tl.kill();
+			};
 		});
 	}
 
