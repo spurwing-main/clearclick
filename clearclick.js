@@ -557,6 +557,13 @@ function main() {
 	}
 
 	function caseStudiesCarousel() {
+		function debounce(fn, wait = 120) {
+			let t;
+			return (...args) => {
+				clearTimeout(t);
+				t = setTimeout(() => fn(...args), wait);
+			};
+		}
 		const mainRoot = document.querySelector(".csc_list-wrapper.embla");
 		const thumbRoot = document.querySelector(".csc_logo-slider.embla");
 
@@ -581,7 +588,7 @@ function main() {
 			align: "center",
 			loop: false,
 			dragFree: true,
-			containScroll: "trimSnaps",
+			// containScroll: "trimSnaps",
 			duration: 12,
 		};
 		const THUMB_OPTIONS_OVERFLOW = {
@@ -630,7 +637,7 @@ function main() {
 
 				// Wrap logo button in a thumb slide
 				const thumbSlide = document.createElement("div");
-				thumbSlide.className = "csc_logo-slide embla__slide";
+				thumbSlide.className = "csc_logo-slide embla__slide u-no-select";
 				thumbSlide.dataset.index = index;
 
 				// Clone the button so we don't mutate the main slide DOM.
@@ -647,15 +654,46 @@ function main() {
 		let layoutRaf = 0;
 		let ro = null;
 
+		// Optional: treat the viewport as narrower when determining overflow.
+		// This lets you add “effective padding” so the strip switches to Embla
+		// a bit earlier (even if it only barely fits).
+		// Usage: add `data-cc-overflow-pad="24"` (pixels) on `.csc_logo-slider`.
+		const overflowPadPx = (() => {
+			const raw = thumbRoot.getAttribute("data-cc-overflow-pad");
+			const n = raw == null ? 0 : parseFloat(raw);
+			return Number.isFinite(n) ? Math.max(0, n) : 0;
+		})();
+
 		function getThumbSlides() {
 			return emblaThumb ? emblaThumb.slideNodes() : Array.from(thumbContainer.children);
 		}
 
-		function measureThumbOverflow() {
-			const viewportWidth = thumbViewport.clientWidth;
-			const trackWidth = thumbContainer.scrollWidth;
-			// Add a small buffer for rounding/font/image load jitter.
-			return trackWidth > viewportWidth + 2;
+		const HYST_PX = 8; // deadband to prevent flip-flop near threshold
+
+		function measureThumbOverflowStable() {
+			const viewportWidth = thumbViewport.getBoundingClientRect().width;
+
+			// If hidden / not laid out yet, don't change modes based on junk numbers.
+			if (viewportWidth < 2) return null;
+
+			const effectiveViewport = Math.max(0, viewportWidth - overflowPadPx * 2);
+
+			// Layout width of all slides (includes gaps). Not affected by transforms.
+			const contentWidth = Math.ceil(thumbContainer.scrollWidth);
+
+			// If still not measurable (can happen mid-build), bail.
+			if (contentWidth < 2) return null;
+
+			const delta = contentWidth - effectiveViewport;
+
+			// First run: normal threshold
+			if (thumbHasOverflow == null) return delta > 2;
+
+			// Hysteresis:
+			// - if currently overflow, only switch OFF once we are comfortably under
+			// - if currently not overflow, only switch ON once we are comfortably over
+			if (thumbHasOverflow) return delta > -HYST_PX;
+			return delta > HYST_PX;
 		}
 
 		function initThumbEmblaIfNeeded({ loop } = {}) {
@@ -688,7 +726,12 @@ function main() {
 		}
 
 		function applyThumbMode() {
-			const hasOverflow = measureThumbOverflow();
+			const hasOverflow = measureThumbOverflowStable();
+			if (hasOverflow == null) return; // try again later
+
+			// If mode didn't change, do nothing (prevents unnecessary churn)
+			if (thumbHasOverflow === hasOverflow) return;
+
 			thumbHasOverflow = hasOverflow;
 
 			thumbRoot.classList.toggle("has-overflow", hasOverflow);
@@ -701,16 +744,48 @@ function main() {
 			}
 		}
 
+		const applyThumbModeDebounced = debounce(() => {
+			applyThumbMode();
+			syncThumbs();
+		}, 120);
+
 		function scheduleThumbLayout() {
 			if (layoutRaf) cancelAnimationFrame(layoutRaf);
 			layoutRaf = requestAnimationFrame(() => {
 				layoutRaf = 0;
-				applyThumbMode();
+
+				// Cheap update every frame (classes)
 				syncThumbs();
+
+				// Expensive init/destroy only after resizing settles
+				applyThumbModeDebounced();
 			});
 		}
 
+		function watchThumbAssetsForLayout() {
+			// `scrollWidth` can change when images/fonts finish loading without any resize.
+			// ResizeObserver doesn't reliably fire for scrollWidth changes, so we also
+			// listen to asset load events.
+			try {
+				const imgs = Array.from(thumbContainer.querySelectorAll("img"));
+				imgs.forEach((img) => {
+					if (img.complete) return;
+					img.addEventListener("load", scheduleThumbLayout, { once: true });
+					img.addEventListener("error", scheduleThumbLayout, { once: true });
+				});
+			} catch (e) {}
+
+			// Fonts can also affect the strip width.
+			if (document.fonts && typeof document.fonts.ready?.then === "function") {
+				document.fonts.ready.then(scheduleThumbLayout).catch(() => {});
+			}
+
+			// Final catch-all once the page is fully loaded.
+			window.addEventListener("load", scheduleThumbLayout, { once: true });
+		}
+
 		buildThumbs();
+		watchThumbAssetsForLayout();
 
 		// --- Click thumbs → move main ---
 		getThumbSlides().forEach((slide) => {
@@ -765,6 +840,7 @@ function main() {
 		setTimeout(scheduleThumbLayout, 0);
 		setTimeout(scheduleThumbLayout, 250);
 		setTimeout(scheduleThumbLayout, 1000);
+		setTimeout(scheduleThumbLayout, 2000);
 
 		emblaMain.on("init", updateMainSlideStates);
 		emblaMain.on("select", updateMainSlideStates);
@@ -1439,18 +1515,35 @@ function main() {
 
 		// Reset state each time so replay is consistent
 		setRingsInitial(svg);
-		gsap.set([header, subtitle, body, footer, services], { autoAlpha: 0, y: 20 });
 
-		const tl = gsap.timeline(
-			(onComplete = () => {
+		const contentEls = [header, subtitle, body, footer, services].filter(Boolean);
+		gsap.set(contentEls, { autoAlpha: 0, y: 20 });
+
+		const isMobile = window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+
+		const OVERLAP = "-=0.6";
+
+		const tl = gsap.timeline({
+			onComplete: () => {
 				console.log("Pane animation complete");
-			})
-		);
-		tl.to(header, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" });
-		tl.to(subtitle, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
-		tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
-		tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
-		tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, "-=0.6");
+			},
+		});
+		if (header) tl.to(header, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" });
+		if (subtitle)
+			tl.to(subtitle, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+		if (body) tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+
+		// Mobile uses the same overlap feel, but swaps the order:
+		// services -> footer (instead of footer -> services)
+		if (isMobile) {
+			if (services)
+				tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+			if (footer) tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+		} else {
+			if (footer) tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+			if (services)
+				tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+		}
 
 		// Consistent rings animation everywhere
 		addRingsToTimeline(tl, svg, "<");
@@ -1474,12 +1567,111 @@ function main() {
 		return tabsEl.querySelector(`.w-tab-content .w-tab-pane[data-w-tab="${CSS.escape(tabName)}"]`);
 	}
 
+	function initTabsHeightTween() {
+		if (typeof gsap === "undefined") return;
+
+		// Skip mobile accordion mode (you already have separate logic there)
+		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+
+		const prefersReduced = () =>
+			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+		document.querySelectorAll(".c-tabs .tabs_tabs.w-tabs").forEach((tabsEl) => {
+			if (tabsEl._ccHeightTweenBound) return;
+			tabsEl._ccHeightTweenBound = true;
+
+			const contentEl = tabsEl.querySelector(".w-tab-content, .tabs_tabs-content");
+			if (!contentEl) return;
+
+			const killTween = () => {
+				if (tabsEl._ccTabHeightTween) {
+					try {
+						tabsEl._ccTabHeightTween.kill();
+					} catch (e) {}
+					tabsEl._ccTabHeightTween = null;
+				}
+			};
+
+			const tweenToActiveHeight = (duration = 0.35) => {
+				if (isMobile() || prefersReduced()) return;
+
+				killTween();
+
+				const from = contentEl.getBoundingClientRect().height;
+
+				// Lock current height BEFORE Webflow toggles panes (prevents snap)
+				gsap.set(contentEl, { height: from, overflow: "hidden" });
+
+				// Wait for Webflow to apply w--tab-active + display changes
+				requestAnimationFrame(() => {
+					requestAnimationFrame(() => {
+						const activePane =
+							contentEl.querySelector(".w-tab-pane.w--tab-active") ||
+							contentEl.querySelector(".tabs_tab-pane.w--tab-active");
+
+						// Fallback if for some reason active pane isn't found yet
+						const to = activePane
+							? activePane.getBoundingClientRect().height
+							: contentEl.scrollHeight;
+
+						if (!Number.isFinite(to) || Math.abs(to - from) < 1) {
+							gsap.set(contentEl, { clearProps: "height,overflow" });
+							return;
+						}
+
+						tabsEl._ccTabHeightTween = gsap.to(contentEl, {
+							height: to,
+							duration,
+							ease: "power2.out",
+							overwrite: "auto",
+							onComplete: () => {
+								gsap.set(contentEl, { clearProps: "height,overflow" });
+								tabsEl._ccTabHeightTween = null;
+							},
+						});
+					});
+				});
+			};
+
+			// Capture phase = we run BEFORE Webflow’s own tab handler
+			tabsEl.addEventListener(
+				"click",
+				(e) => {
+					const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
+					if (!link || !tabsEl.contains(link)) return;
+					tweenToActiveHeight(0.35);
+				},
+				{ capture: true }
+			);
+
+			tabsEl.addEventListener(
+				"keydown",
+				(e) => {
+					if (e.key !== "Enter" && e.key !== " ") return;
+					const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
+					if (!link || !tabsEl.contains(link)) return;
+					tweenToActiveHeight(0.35);
+				},
+				{ capture: true }
+			);
+
+			// Optional: set a sane initial state (no animation, just clears any weird inline height)
+			requestAnimationFrame(() => gsap.set(contentEl, { clearProps: "height,overflow" }));
+		});
+	}
+
 	function playByLink(tabsEl, linkEl) {
 		if (!linkEl) return;
 
 		const tabName = linkEl.getAttribute("data-w-tab");
-		const pane = findPaneByTabName(tabsEl, tabName);
-		if (pane) playPane(pane);
+
+		// Run pane animation after Webflow has toggled the active pane (avoids animating hidden panes).
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => {
+				const pane = findPaneByTabName(tabsEl, tabName);
+				if (pane) playPane(pane);
+			});
+		});
 	}
 
 	function initTabsForComponent(tabsEl) {
@@ -1490,20 +1682,29 @@ function main() {
 		const currentLink = tabsEl.querySelector(".w-tab-menu .w-tab-link.w--current");
 		if (currentLink) playByLink(tabsEl, currentLink);
 
-		// click-based activation: use clicked link's data-w-tab (no waiting for w--tab-active)
-		tabsEl.addEventListener("click", (e) => {
-			const link = e.target.closest(".w-tab-menu .w-tab-link");
-			if (!link || !tabsEl.contains(link)) return;
-			playByLink(tabsEl, link);
-		});
+		// click-based activation: keep in capture so we fire even if Webflow changes propagation.
+		tabsEl.addEventListener(
+			"click",
+			(e) => {
+				const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
+				if (!link || !tabsEl.contains(link)) return;
+				playByLink(tabsEl, link);
+			},
+			{ capture: true }
+		);
 
 		// keyboard activation (Enter/Space) on focused link
-		tabsEl.addEventListener("keydown", (e) => {
-			if (e.key !== "Enter" && e.key !== " ") return;
-			const link = e.target.closest(".w-tab-menu .w-tab-link");
-			if (!link || !tabsEl.contains(link)) return;
-			playByLink(tabsEl, link);
-		});
+		// capture helps us run even if Webflow changes propagation.
+		tabsEl.addEventListener(
+			"keydown",
+			(e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
+				if (!link || !tabsEl.contains(link)) return;
+				playByLink(tabsEl, link);
+			},
+			{ capture: true }
+		);
 	}
 
 	// --------- mobile accordion ----------
@@ -1613,6 +1814,8 @@ function main() {
 		document.querySelectorAll(".c-tabs .tabs_tabs").forEach((tabsEl) => {
 			initTabsForComponent(tabsEl);
 		});
+
+		initTabsHeightTween();
 
 		applyAccordionState();
 	}
@@ -1783,26 +1986,66 @@ function main() {
 			ringsRoots.forEach((ringsRoot) => addRingsToTimeline(tl, ringsRoot, 0));
 
 			let revealed = false;
+			let io = null;
+
+			function isInRevealZone() {
+				// Fallback for cases where ScrollTrigger start positions are stale due to lazy-loaded
+				// content/layout shifts (common with carousels/images).
+				// Matches the default start "top 75%" behavior.
+				const rect = group.getBoundingClientRect();
+				const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+				if (!vh) return false;
+				return rect.top <= vh * 0.75 && rect.bottom >= 0;
+			}
+
 			const reveal = () => {
 				if (revealed) return;
 				revealed = true;
 				group._ccRevealRevealed = true;
+				if (io) {
+					try {
+						io.disconnect();
+					} catch (e) {}
+					io = null;
+				}
 				tl.play(0);
 			};
 
 			const st = ScrollTrigger.create({
 				trigger: group,
 				start,
+				invalidateOnRefresh: true,
 				once, // keep your existing once behavior
 				onEnter: reveal,
 				// ❌ remove onEnterBack restart; it causes the “fires as you scroll up/down” effect
 				onRefresh: (self) => {
 					// If we're already past the start when refreshed, reveal once.
-					if (self.progress > 0) reveal();
+					if (self.progress > 0 || isInRevealZone()) reveal();
 				},
 			});
 
-			if (st.progress > 0) reveal();
+			// Covers initial load where we're already past the trigger.
+			// Also covers stale start positions where the section is visible but progress is 0.
+			if (st.progress > 0 || isInRevealZone()) reveal();
+
+			// Extra safety net: IntersectionObserver is resilient to layout shifts and
+			// "hidden then shown" containers (tabs/filters) without needing a manual refresh.
+			if (!revealed && typeof IntersectionObserver !== "undefined") {
+				const rootMargin = group.getAttribute("data-cc-reveal-root-margin") || "0px 0px -25% 0px"; // approx "top 75%" start
+
+				try {
+					io = new IntersectionObserver(
+						(entries) => {
+							if (revealed) return;
+							if (entries.some((e) => e.isIntersecting || e.intersectionRatio > 0)) reveal();
+						},
+						{ root: null, rootMargin, threshold: 0.01 }
+					);
+					io.observe(group);
+				} catch (e) {
+					io = null;
+				}
+			}
 		});
 		// ✅ helps when content/fonts/images cause layout shifts
 		if (madeAny) ScrollTrigger.refresh();
