@@ -113,39 +113,91 @@ function main() {
 	}
 
 	function animTextFadeIn() {
+		if (
+			typeof gsap === "undefined" ||
+			typeof ScrollTrigger === "undefined" ||
+			typeof SplitText === "undefined"
+		) {
+			console.warn("[clearclick] GSAP/ScrollTrigger/SplitText missing; skipping animTextFadeIn()");
+			return;
+		}
+
 		const startOpacity = 0.3;
-		const textElements = document.querySelectorAll(".anim-text-fade");
-		/* use GSAP split text to animate in word by word according to these specs: 
+		const els = gsap.utils.toArray(".anim-text-fade");
+		let madeAnyScrollTriggers = false;
 
-	Text Fade on Scroll
-Each text block fades in word-by-word as it enters view.
-Motion: opacity 0 → 1 with light stagger (~0.1–0.2s)
-Timing: ~0.6–0.8s per word/line, ease-in-out
-Feel: soft, calm, no movement — opacity only
-Trigger: starts once at ~30–40% in viewport (no repeat)
-Ref: Studio Everywhere / Releaf.bio
+		els.forEach((el) => {
+			// --- safe re-init (Swup/FS rerenders/etc.) ---
+			if (el._ccTextFade) {
+				el._ccTextFade.st?.kill();
+				el._ccTextFade.tl?.kill();
+				el._ccTextFade.split?.revert();
+				if (typeof el._ccTextFade.cleanup === "function") el._ccTextFade.cleanup();
+				el._ccTextFade = null;
+			}
 
-*/
-		textElements.forEach((el) => {
+			// Ensure the block itself isn't hidden by CSS
+			gsap.set(el, { autoAlpha: 1 });
+
 			const split = new SplitText(el, { type: "words" });
-			// gsap.set(split.words, { autoAlpha: startOpacity }); //
-			gsap.set(el, { autoAlpha: 1 }); // ensure container is visible, revert default CSS
-			const tl = gsap.timeline({
-				scrollTrigger: {
-					trigger: el,
-					start: "top 75%",
-					end: "bottom 50%",
-					scrub: 1,
-					markers: false,
+
+			// Explicit baseline (don’t rely on from() + immediateRender quirks)
+			gsap.set(split.words, { autoAlpha: startOpacity });
+
+			const tl = gsap.timeline({ paused: true });
+			tl.to(split.words, {
+				autoAlpha: 1,
+				duration: 0.75,
+				ease: "power1.inOut",
+				stagger: 0.08,
+				overwrite: "auto",
+				onComplete: () => gsap.set(split.words, { clearProps: "opacity,visibility" }),
+			});
+
+			const revealItem = el.classList.contains("cc-reveal-item")
+				? el
+				: el.closest?.(".cc-reveal-item") || null;
+
+			// If this lives inside the cc-reveal system, do NOT add a separate ScrollTrigger.
+			// Instead, listen for the reveal item's own event so timings stay in sync.
+			if (revealItem) {
+				const onReveal = () => tl.play(0);
+				revealItem.addEventListener("cc:reveal", onReveal, { once: true });
+
+				// If reveal already happened before fonts loaded / this init ran,
+				// force the end state so text isn't stuck dim.
+				if (revealItem.dataset?.ccRevealDone === "1") tl.progress(1);
+
+				el._ccTextFade = {
+					split,
+					tl,
+					st: null,
+					cleanup: () => revealItem.removeEventListener("cc:reveal", onReveal),
+				};
+				return;
+			}
+
+			const st = ScrollTrigger.create({
+				trigger: el,
+				start: "top 65%", // ~35% into viewport (tweak)
+				once: true, // kill after first run
+				onEnter: () => tl.play(0),
+				onRefresh(self) {
+					// If we refreshed while already past the start, force final state immediately.
+					if (self.progress > 0) tl.progress(1);
 				},
 			});
-			tl.from(split.words, {
-				autoAlpha: startOpacity,
-				duration: 4,
-				ease: "cubic.out",
-				stagger: 0.4,
-			});
+
+			madeAnyScrollTriggers = true;
+
+			// Covers initial load where we're already past the trigger
+			if (st.progress > 0) tl.progress(1);
+
+			el._ccTextFade = { split, tl, st };
 		});
+
+		// Helpful if any last-moment layout shifts happen after this init
+		if (madeAnyScrollTriggers) ScrollTrigger.refresh();
 	}
 
 	function initMotionCounters() {
@@ -519,13 +571,13 @@ Ref: Studio Everywhere / Releaf.bio
 		// --- Embla options ---
 		const MAIN_OPTIONS = {
 			align: "start",
-			loop: false,
+			loop: true,
 			duration: 12,
 		};
 
 		const THUMB_OPTIONS = {
 			align: "center",
-			loop: false,
+			loop: true,
 			dragFree: true,
 			containScroll: "keepSnaps",
 			duration: 12,
@@ -1209,12 +1261,27 @@ Ref: Studio Everywhere / Releaf.bio
 					transformOrigin: "50% 50%",
 				});
 
-				const getMaxX = () => {
-					const trackRect = track.getBoundingClientRect();
-					const containerRect = orbitEl.getBoundingClientRect();
-					const overflow = track.scrollWidth - containerRect.width;
-					return overflow > 0 ? -overflow : 0;
+				const getGutter = () => {
+					// Optionally set via CSS: .c-orbit { --cc-orbit-gutter: 16px; }
+					const raw = getComputedStyle(orbitEl).getPropertyValue("--cc-orbit-gutter");
+					const g = parseFloat(raw || "");
+					return Number.isFinite(g) ? g : 16; // px fallback
 				};
+
+				const getEndX = () => {
+					const containerW = orbitEl.getBoundingClientRect().width;
+					const overflow = track.scrollWidth - containerW;
+					const g = getGutter();
+
+					// If no overflow, just keep a left gutter and don't move
+					if (overflow <= 0) return g;
+
+					// End with a right gutter too
+					return -overflow - g;
+				};
+
+				// Start with left gutter
+				gsap.set(track, { x: getGutter() });
 
 				const tl = gsap.timeline({
 					scrollTrigger: {
@@ -1224,11 +1291,12 @@ Ref: Studio Everywhere / Releaf.bio
 						pin: true,
 						anticipatePin: 1,
 						scrub: 1,
+						invalidateOnRefresh: true, // ✅ recalc widths/gutter on refresh/resize
 					},
 				});
 
 				tl.to(track, {
-					x: () => getMaxX(),
+					x: () => getEndX(),
 					duration: 1,
 					ease: "none",
 				});
@@ -1599,14 +1667,26 @@ Ref: Studio Everywhere / Releaf.bio
 				}, intervalMs);
 			}
 
-			function dispatchCountUpForItem(item, group) {
+			function dispatchCountUpForItem(item, group, revealDurationSec) {
 				const el = item.querySelector("[data-motion-countup-event]");
 				const eventName = el?.getAttribute("data-motion-countup-event")?.trim();
 				if (!eventName) return;
 
-				fireEventWithRetry(eventName, { trigger: group, item });
-			}
+				// Optional override per element:
+				// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
+				const overrideDelaySec = parseFloat(el?.getAttribute("data-motion-countup-delay") || "");
+				const delaySec = Number.isFinite(overrideDelaySec)
+					? overrideDelaySec
+					: Math.max(0, (revealDurationSec || 0) * 0.5); // default: half the reveal duration
 
+				// Prevent duplicate timers if something re-inits quickly
+				if (item._ccCountupTimeout) clearTimeout(item._ccCountupTimeout);
+
+				item._ccCountupTimeout = setTimeout(() => {
+					fireEventWithRetry(eventName, { trigger: group, item });
+					item._ccCountupTimeout = null;
+				}, Math.round(delaySec * 1000));
+			}
 			const tl = gsap.timeline({ paused: true });
 
 			items.forEach((item, i) => {
@@ -1621,7 +1701,16 @@ Ref: Studio Everywhere / Releaf.bio
 						ease: "power2.out",
 						overwrite: "auto",
 						clearProps: "y",
-						onStart: () => dispatchCountUpForItem(item, group),
+						onStart: () => {
+							// Mark + emit a per-item reveal event so other animations (e.g. animTextFadeIn)
+							// can sync to the cc-reveal timing without creating extra ScrollTriggers.
+							item.dataset.ccRevealDone = "1";
+							try {
+								item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
+							} catch (e) {}
+
+							dispatchCountUpForItem(item, group, duration); // ✅ delayed dispatch
+						},
 					},
 					t
 				);
