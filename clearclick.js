@@ -7,6 +7,30 @@ function main() {
 
 	const { animate, inView, stagger } = MotionGlobal || {};
 
+	/* DEBUG LOGGING UTILITY */
+	// to enable, set localStorage key "ccDebug[Name]" to "1" with the following command:
+	// localStorage.setItem("ccDebug[Name]", "1");
+	function createDebugLog(prefix, storageKey, defaultPrefix = "clearclick") {
+		let enabled = false;
+		try {
+			enabled = localStorage.getItem(`ccDebug[${prefix}]`) === "1";
+			// console.log("[clearclick] Debug log", prefix, "enabled:", enabled);
+		} catch (e) {
+			enabled = false;
+		}
+
+		const tag = prefix ? `[${prefix}]` : `[${defaultPrefix}]`;
+
+		const log = (...args) => {
+			if (!enabled) return;
+			console.log(tag, ...args);
+		};
+
+		log.enabled = enabled;
+
+		return log;
+	}
+
 	function homeHeroCorners() {
 		// on scroll, animate bottom corner radius of .c-home-hero from 0 to 3rem
 		const hero = document.querySelector(".c-home-hero");
@@ -1861,6 +1885,8 @@ function main() {
 	) {
 		if (!item) return;
 
+		const log = createDebugLog("countup", "ccDebugCountup");
+
 		// Support either:
 		// - the item itself having data-motion-countup-event
 		// - a child element having data-motion-countup-event
@@ -1869,7 +1895,10 @@ function main() {
 		const eventName = eventEl?.getAttribute?.("data-motion-countup-event")?.trim();
 		if (!eventName) return;
 
-		console.log("ccDispatchCountUpForItem:", { item, eventName });
+		if (log.enabled) {
+			// eslint-disable-next-line no-console
+			log("dispatch scheduled", { item, eventName });
+		}
 
 		// Optional override per element:
 		// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
@@ -1889,28 +1918,8 @@ function main() {
 		}, Math.round(Math.max(0, delaySec) * 1000));
 	}
 
-	function initCircleStats({ start = "top bottom", once = true } = {}) {
-		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
-			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping initCircleStats()");
-			return;
-		}
-
-		const DEBUG =
-			window.__CC_DEBUG_CIRCLE_STATS === true || localStorage.getItem("ccDebugCircleStats") === "1";
-		const log = (...args) => {
-			if (!DEBUG) return;
-			// eslint-disable-next-line no-console
-			console.debug("[circle-stats]", ...args);
-		};
-
-		const components = Array.from(document.querySelectorAll(".c-circle-stats"));
-		if (!components.length) return;
-
-		log("init", { count: components.length, start, once });
-
-		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
-		const mobileNow = isMobile();
-		initCircleStats._lastIsMobile = mobileNow;
+	function initCircleStats({ start = "bottom bottom", once = true } = {}) {
+		const log = createDebugLog("circle-stats");
 
 		function debounceLocal(fn, wait = 120) {
 			let t = null;
@@ -1920,6 +1929,16 @@ function main() {
 			};
 		}
 
+		const components = Array.from(document.querySelectorAll(".c-circle-stats"));
+		if (!components.length) return;
+
+		if (log.enabled) log("init", { count: components.length, start, once });
+
+		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+		const mobileNow = isMobile();
+		initCircleStats._lastIsMobile = mobileNow;
+
+		// Ensure vertical lines end at the center of the bg circle on load. This needs layout, so do immediate + next frame.
 		function setCircleStatLineOffsets(root = document) {
 			const comps = Array.from(root.querySelectorAll(".c-circle-stats"));
 			comps.forEach((comp) => {
@@ -1931,7 +1950,7 @@ function main() {
 
 					const w = svg.getBoundingClientRect().width;
 					if (!Number.isFinite(w) || w <= 0) {
-						if (DEBUG) log("line bottom skipped (svg width)", { index, w, item });
+						if (log.enabled) log("line resizing skipped (svg width)", { index, w, item });
 						return;
 					}
 
@@ -1946,9 +1965,6 @@ function main() {
 				});
 			});
 		}
-
-		// Ensure vertical lines end at the center of the bg circle on load.
-		// This needs layout, so do immediate + next frame.
 		setCircleStatLineOffsets();
 		requestAnimationFrame(() => setCircleStatLineOffsets());
 
@@ -1983,8 +1999,15 @@ function main() {
 			return rect.top <= vh * startPct && rect.bottom >= 0;
 		}
 
+		function isPastBottomBottom(el) {
+			const rect = el.getBoundingClientRect();
+			const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+			if (!vh) return false;
+			return rect.bottom <= vh;
+		}
+
 		components.forEach((component) => {
-			const alreadyDone = component.dataset.ccCircleStatsDone === "1";
+			const alreadyDone = component._ccCircleStatsDone === "1";
 			const isMobileComponent = mobileNow;
 			const lineAxis = isMobileComponent ? "scaleX" : "scaleY";
 			const lineOrigin = isMobileComponent ? "left center" : "top center";
@@ -1993,6 +2016,7 @@ function main() {
 			if (component._ccCircleStats) {
 				log("re-init: killing previous", component);
 				component._ccCircleStats.st?.kill?.();
+				component._ccCircleStats.sts?.forEach?.((t) => t?.kill?.());
 				component._ccCircleStats.tl?.kill?.();
 				component._ccCircleStats = null;
 			}
@@ -2004,28 +2028,44 @@ function main() {
 
 			log("bind component", { component, items: items.length });
 
-			// Tunables (slower by default so it reads clearly)
-			const lineDur = 0.35;
-			const ringDur = 0.9;
-			const lineToRingDelay = 0.14;
-			const itemStagger = 0.28;
+			// Tunables
+			const lineDur = 0.75;
+			const ringDur = 1;
+			const lineToRingDelay = 0;
+			const itemOffset = 0.75;
+			const bodyY = 20;
+			const statY = 14;
+			const fadeDur = 0.5;
+
+			// Store refs for safe re-init cleanup
 
 			// Baselines
 			items.forEach((item) => {
+				const itemDone = alreadyDone || item.dataset.ccCircleStatDone === "1";
+				if (alreadyDone) item.dataset.ccCircleStatDone = "1";
+
 				const line = item.querySelector(".circle-stat_line");
 				if (line) {
 					gsap.set(line, {
 						transformOrigin: lineOrigin,
 						opacity: 1,
-						scaleX: isMobileComponent ? (alreadyDone ? 1 : 0) : 1,
-						scaleY: isMobileComponent ? 1 : alreadyDone ? 1 : 0,
+						scaleX: isMobileComponent ? (itemDone ? 1 : 0) : 1,
+						scaleY: isMobileComponent ? 1 : itemDone ? 1 : 0,
 					});
+				}
+
+				const body = item.querySelector(".circle-stat_body");
+				if (body) {
+					gsap.set(body, { autoAlpha: itemDone ? 1 : 0 });
 				}
 
 				const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
 				const bgCirc = item.querySelector("svg > circle.circle-stat_svg-bg");
+				if (bgCirc) {
+					gsap.set(bgCirc, { opacity: itemDone ? 1 : 0 });
+				}
 				if (dashCirc) {
-					if (!alreadyDone || !bgCirc) {
+					if (!itemDone || !bgCirc) {
 						gsap.set(dashCirc, { attr: { r: 0.001, cy: 100 } });
 					} else {
 						const endRaw = parseFloat(item.getAttribute("data-stat-end-value") || "");
@@ -2047,16 +2087,212 @@ function main() {
 				}
 			});
 
-			const tl = gsap.timeline({ paused: true });
+			if (!isMobileComponent) {
+				// Desktop: single trigger, plays the whole component timeline.
+				const tl = gsap.timeline({ paused: true });
+
+				items.forEach((item, index) => {
+					const itemDone = alreadyDone || item.dataset.ccCircleStatDone === "1";
+					const line = item.querySelector(".circle-stat_line");
+					const body = item.querySelector(".circle-stat_body");
+					const statEl = item.querySelector(".circle-stat_stat");
+
+					const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
+					const bgCirc = item.querySelector("svg > circle.circle-stat_svg-bg");
+					const itemTl = gsap.timeline();
+
+					if (itemDone) {
+						tl.add(itemTl, index * itemOffset);
+						return;
+					}
+
+					if (!dashCirc || !bgCirc) {
+						log("missing circles", {
+							index,
+							hasDash: !!dashCirc,
+							hasBg: !!bgCirc,
+							item,
+						});
+					}
+
+					// 0) Fade-ins (bg circle + body)
+					if (bgCirc) {
+						itemTl.from(
+							bgCirc,
+							{ opacity: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							0
+						);
+					}
+					if (body) {
+						itemTl.from(
+							body,
+							{ autoAlpha: 0, y: bodyY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							0
+						);
+					}
+					if (statEl) {
+						itemTl.from(
+							statEl,
+							{ autoAlpha: 0, y: statY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							0
+						);
+					}
+
+					// 1) Line
+					if (line) {
+						itemTl.to(line, {
+							[lineAxis]: 1,
+							duration: lineDur,
+							ease: "power2.out",
+							overwrite: "auto",
+						});
+					}
+
+					// 2) Ring (area-based scaling) + 3) Count-up trigger
+					if (dashCirc && bgCirc) {
+						const endRaw = parseFloat(item.getAttribute("data-stat-end-value") || "");
+						const maxRaw = parseFloat(item.getAttribute("data-stat-max-value") || "");
+						if (Number.isFinite(endRaw)) {
+							let max = Number.isFinite(maxRaw) ? maxRaw : endRaw;
+							if (max < endRaw) max = endRaw;
+
+							const ratio = clamp01(max > 0 ? endRaw / max : 1);
+
+							const rBg = parseFloat(bgCirc.getAttribute("r") || "0") || 0;
+							const cyBg = parseFloat(bgCirc.getAttribute("cy") || "0") || 0;
+							const inset = 2; // keep inside bg circle so stroke/dash doesn't crop
+							const rMax = Math.max(0, rBg - inset);
+							const rEnd = Math.sqrt(ratio) * rMax;
+							const cyEnd = cyBg + (rMax - rEnd);
+
+							const ringStart = line ? lineToRingDelay : 0;
+
+							log("item calc", {
+								index,
+								end: endRaw,
+								max,
+								ratio,
+								rBg,
+								inset,
+								rMax,
+								rEnd,
+								cyBg,
+								cyEnd,
+								ringStart,
+							});
+
+							itemTl.call(
+								() => {
+									try {
+										item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
+									} catch (e) {}
+
+									ccDispatchCountUpForItem(item, component, {
+										durationSec: 0.5,
+										defaultDelaySec: 0,
+									});
+								},
+								[],
+								ringStart
+							);
+
+							itemTl.to(
+								dashCirc,
+								{
+									attr: { r: rEnd, cy: cyEnd },
+									duration: ringDur,
+									ease: "power2.out",
+									overwrite: "auto",
+								},
+								ringStart
+							);
+						}
+					}
+
+					// Stagger per-item timelines so each item runs line -> ring -> countup as a unit.
+					tl.add(itemTl, index * itemOffset);
+				});
+
+				let revealed = false;
+				const reveal = () => {
+					if (revealed) return;
+					revealed = true;
+					component._ccCircleStatsDone = "1";
+					items.forEach((it) => (it.dataset.ccCircleStatDone = "1"));
+					log("reveal", { component });
+					tl.play(0);
+				};
+
+				if (alreadyDone) revealed = true;
+
+				let st = null;
+				if (!alreadyDone) {
+					st = ScrollTrigger.create({
+						trigger: startEl,
+						start,
+						invalidateOnRefresh: true,
+						once,
+						onEnter: () => {
+							log("ScrollTrigger onEnter", { component, start, startEl });
+							reveal();
+						},
+						onRefresh: (self) => {
+							if (log.enabled)
+								log("ScrollTrigger onRefresh", { progress: self.progress, component, startEl });
+							if (self.progress > 0 || isPastBottomBottom(startEl)) reveal();
+						},
+					});
+
+					// Covers initial load where already past the trigger
+					if (st.progress > 0 || isPastBottomBottom(startEl)) reveal();
+				} else {
+					// Already revealed once; keep end state.
+					tl.progress(1);
+				}
+
+				component._ccCircleStats = { tl, st, sts: [] };
+				return;
+			}
+
+			// Mobile: one ScrollTrigger per item (bottom hits bottom), play one-at-a-time.
+			const sts = [];
+			let playChain = Promise.resolve();
+
+			const revealItem = (item, itemTl, index) => {
+				if (!item || item.dataset.ccCircleStatDone === "1") return;
+				item.dataset.ccCircleStatDone = "1";
+				log("reveal item", { component, index, item });
+
+				playChain = playChain.then(
+					() =>
+						new Promise((resolve) => {
+							if (!itemTl || itemTl.totalDuration() === 0) {
+								itemTl?.progress?.(1);
+								resolve();
+								return;
+							}
+							itemTl.eventCallback("onComplete", () => resolve());
+							itemTl.play(0);
+						})
+				);
+
+				if (items.every((it) => it.dataset.ccCircleStatDone === "1")) {
+					component._ccCircleStatsDone = "1";
+				}
+			};
 
 			items.forEach((item, index) => {
-				const t0 = index * itemStagger;
+				const itemDone = alreadyDone || item.dataset.ccCircleStatDone === "1";
+				if (itemDone) return;
 
 				const line = item.querySelector(".circle-stat_line");
+				const body = item.querySelector(".circle-stat_body");
 				const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
 				const bgCirc = item.querySelector("svg > circle.circle-stat_svg-bg");
+				const itemTl = gsap.timeline({ paused: true });
+				const statEl = item.querySelector(".circle-stat_stat");
 
-				if (DEBUG && (!dashCirc || !bgCirc)) {
+				if (log.enabled && (!dashCirc || !bgCirc)) {
 					log("missing circles", {
 						index,
 						hasDash: !!dashCirc,
@@ -2065,18 +2301,37 @@ function main() {
 					});
 				}
 
+				// 0) Fade-ins (bg circle + body)
+				if (bgCirc) {
+					itemTl.from(
+						bgCirc,
+						{ opacity: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						0
+					);
+				}
+				if (body) {
+					itemTl.from(
+						body,
+						{ autoAlpha: 0, y: bodyY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						0
+					);
+				}
+				if (statEl) {
+					itemTl.from(
+						statEl,
+						{ autoAlpha: 0, y: statY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						0
+					);
+				}
+
 				// 1) Line
 				if (line) {
-					tl.to(
-						line,
-						{
-							[lineAxis]: 1,
-							duration: lineDur,
-							ease: "power2.out",
-							overwrite: "auto",
-						},
-						t0
-					);
+					itemTl.to(line, {
+						[lineAxis]: 1,
+						duration: lineDur,
+						ease: "power2.out",
+						overwrite: "auto",
+					});
 				}
 
 				// 2) Ring (area-based scaling) + 3) Count-up trigger
@@ -2091,14 +2346,12 @@ function main() {
 
 						const rBg = parseFloat(bgCirc.getAttribute("r") || "0") || 0;
 						const cyBg = parseFloat(bgCirc.getAttribute("cy") || "0") || 0;
-						const inset = 2; // keep inside bg circle so stroke/dash doesn't crop
+						const inset = 2;
 						const rMax = Math.max(0, rBg - inset);
 						const rEnd = Math.sqrt(ratio) * rMax;
-						// Anchor the dashed circle's bottom to the bg circle's bottom (minus inset):
-						// (cyEnd + rEnd) = (cyBg + rMax)  =>  cyEnd = cyBg + (rMax - rEnd)
 						const cyEnd = cyBg + (rMax - rEnd);
 
-						const ringStart = t0 + lineDur + lineToRingDelay;
+						const ringStart = line ? lineToRingDelay : 0;
 
 						log("item calc", {
 							index,
@@ -2114,23 +2367,14 @@ function main() {
 							ringStart,
 						});
 
-						// Dispatch count-up event right as the ring begins
-						tl.call(
+						itemTl.call(
 							() => {
 								try {
 									item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
 								} catch (e) {}
 
-								const el = item.querySelector("[data-motion-countup-event]");
-								// const eventName = el?.getAttribute("data-motion-countup-event")?.trim();
-								// if (!eventName) {
-								// 	log("no countup eventName", { index, item });
-								// 	return;
-								// }
-
-								// log("dispatch countup", { index, eventName, item });
 								ccDispatchCountUpForItem(item, component, {
-									durationSec: ringDur,
+									durationSec: 0.5,
 									defaultDelaySec: 0,
 								});
 							},
@@ -2138,7 +2382,7 @@ function main() {
 							ringStart
 						);
 
-						tl.to(
+						itemTl.to(
 							dashCirc,
 							{
 								attr: { r: rEnd, cy: cyEnd },
@@ -2150,45 +2394,30 @@ function main() {
 						);
 					}
 				}
-			});
 
-			let revealed = false;
-			const reveal = () => {
-				if (revealed) return;
-				revealed = true;
-				component.dataset.ccCircleStatsDone = "1";
-				log("reveal", { component });
-				tl.play(0);
-			};
-
-			if (alreadyDone) revealed = true;
-
-			let st = null;
-			if (!alreadyDone) {
-				st = ScrollTrigger.create({
-					trigger: startEl,
-					start,
+				const st = ScrollTrigger.create({
+					trigger: item,
+					start: "bottom bottom",
 					invalidateOnRefresh: true,
 					once,
 					onEnter: () => {
-						log("ScrollTrigger onEnter", { component, start, startEl });
-						reveal();
+						log("ScrollTrigger onEnter (item)", { component, index, item });
+						revealItem(item, itemTl, index);
 					},
 					onRefresh: (self) => {
-						if (DEBUG)
-							log("ScrollTrigger onRefresh", { progress: self.progress, component, startEl });
-						if (self.progress > 0 || isInStartZone(startEl, 1)) reveal();
+						if (log.enabled)
+							log("ScrollTrigger onRefresh (item)", { progress: self.progress, component, index });
+						if (self.progress > 0 || isPastBottomBottom(item)) revealItem(item, itemTl, index);
 					},
 				});
 
-				// Covers initial load where already past the trigger
-				if (st.progress > 0 || isInStartZone(startEl, 1)) reveal();
-			} else {
-				// Already revealed once; keep end state.
-				tl.progress(1);
-			}
+				sts.push(st);
 
-			component._ccCircleStats = { tl, st };
+				// Covers initial load where already past the trigger
+				if (st.progress > 0 || isPastBottomBottom(item)) revealItem(item, itemTl, index);
+			});
+
+			component._ccCircleStats = { tl: null, st: null, sts };
 		});
 
 		ScrollTrigger.refresh();
@@ -3402,6 +3631,84 @@ function main() {
 		});
 	}
 
+	function timeline() {
+		const log = createDebugLog("timeline");
+
+		const timelineSections = Array.from(document.querySelectorAll(".c-timeline"));
+		if (!timelineSections.length) {
+			return;
+		}
+		log("Found timeline sections:", timelineSections.length);
+
+		timelineSections.forEach((section) => {
+			const items = Array.from(section.querySelectorAll(".c-timeline-item"));
+			const line = section.querySelector(".timeline_line");
+			if (line) {
+				gsap.set(line, { scaleY: 0, transformOrigin: "top center" });
+				gsap.to(line, {
+					scrollTrigger: {
+						trigger: items[0],
+						start: "top 80%",
+						endTrigger: items[items.length - 1],
+						end: "bottom bottom",
+						scrub: 5,
+					},
+					scaleY: 1,
+					ease: "linear",
+				});
+			}
+
+			log("Animating timeline items:", items.length);
+
+			items.forEach((item, index) => {
+				const circle = item.querySelector(".timeline-item_circle");
+				const content = item.querySelector(".timeline-item_content");
+				const title = item.querySelector("h3");
+				const body = item.querySelector("p");
+
+				const tl = gsap.timeline({
+					scrollTrigger: {
+						trigger: item,
+						start: "top 80%",
+						toggleActions: "play none none none",
+					},
+				});
+				tl.from(circle, {
+					scale: 0,
+					opacity: 0,
+					duration: 0.6,
+					ease: "power1.inOut",
+				});
+				tl.from(
+					title,
+					{
+						y: 10,
+						opacity: 0,
+						duration: 0.8,
+						ease: "power1.inOut",
+					},
+					"<+0.25"
+				);
+				tl.from(
+					body,
+					{
+						y: 8,
+						opacity: 0,
+						duration: 0.8,
+						ease: "power1.inOut",
+					},
+					"<+0.05"
+				);
+			});
+		});
+	}
+
+	/* general catch */
+	if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
+		console.warn("[clearclick] GSAP/ScrollTrigger not found");
+		return;
+	}
+
 	homeHeroCorners();
 	hideShowNav();
 	openNav();
@@ -3414,7 +3721,8 @@ function main() {
 	caseStudiesSimpleCarousel();
 	solsCarousel();
 	orbit();
-	initCircleStats();
+	timeline();
+
 	initScrollReveals();
 	expandSolutionServiceTags();
 	pinSolutionCardsMobile();
@@ -3424,6 +3732,7 @@ function main() {
 		document.body.classList.add("fonts-loaded");
 		animTextFadeIn();
 		initMotionCounters();
+		initCircleStats();
 	});
 
 	hookFinsweetRenders();
