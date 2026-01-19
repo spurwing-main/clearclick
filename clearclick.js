@@ -1833,6 +1833,367 @@ function main() {
 	// Apply the buildPaneTimeline “feel” to arbitrary sections on scroll.
 	// Usage:
 	// <section class="cc-reveal"> ... <h2 class="cc-reveal-item">...</h2> ... </section>
+	function ccFireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
+		if (!eventName) return;
+		const startedAt = performance.now();
+
+		const fire = () => {
+			try {
+				window.dispatchEvent(new CustomEvent(eventName, { detail }));
+			} catch (e) {}
+		};
+
+		// immediate + next frame
+		fire();
+		requestAnimationFrame(fire);
+
+		// keep trying for a bit (covers slow mount)
+		const timer = setInterval(() => {
+			fire();
+			if (performance.now() - startedAt >= maxMs) clearInterval(timer);
+		}, intervalMs);
+	}
+
+	function ccDispatchCountUpForItem(
+		item,
+		trigger,
+		{ durationSec, defaultDelaySec, maxMs = 2500, intervalMs = 120 } = {}
+	) {
+		if (!item) return;
+
+		// Support either:
+		// - the item itself having data-motion-countup-event
+		// - a child element having data-motion-countup-event
+		const el = item.querySelector("[data-motion-countup-event]");
+		const eventEl = item.hasAttribute?.("data-motion-countup-event") ? item : el;
+		const eventName = eventEl?.getAttribute?.("data-motion-countup-event")?.trim();
+		if (!eventName) return;
+
+		console.log("ccDispatchCountUpForItem:", { item, eventName });
+
+		// Optional override per element:
+		// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
+		const overrideDelaySec = parseFloat(eventEl?.getAttribute("data-motion-countup-delay") || "");
+		const delaySec = Number.isFinite(overrideDelaySec)
+			? overrideDelaySec
+			: Number.isFinite(defaultDelaySec)
+			? defaultDelaySec
+			: Math.max(0, (durationSec || 0) * 0.5);
+
+		// Prevent duplicate timers if something re-inits quickly
+		if (item._ccCountupTimeout) clearTimeout(item._ccCountupTimeout);
+
+		item._ccCountupTimeout = setTimeout(() => {
+			ccFireEventWithRetry(eventName, { trigger, item }, { maxMs, intervalMs });
+			item._ccCountupTimeout = null;
+		}, Math.round(Math.max(0, delaySec) * 1000));
+	}
+
+	function initCircleStats({ start = "top bottom", once = true } = {}) {
+		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
+			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping initCircleStats()");
+			return;
+		}
+
+		const DEBUG =
+			window.__CC_DEBUG_CIRCLE_STATS === true || localStorage.getItem("ccDebugCircleStats") === "1";
+		const log = (...args) => {
+			if (!DEBUG) return;
+			// eslint-disable-next-line no-console
+			console.debug("[circle-stats]", ...args);
+		};
+
+		const components = Array.from(document.querySelectorAll(".c-circle-stats"));
+		if (!components.length) return;
+
+		log("init", { count: components.length, start, once });
+
+		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+		const mobileNow = isMobile();
+		initCircleStats._lastIsMobile = mobileNow;
+
+		function debounceLocal(fn, wait = 120) {
+			let t = null;
+			return (...args) => {
+				if (t) clearTimeout(t);
+				t = setTimeout(() => fn(...args), wait);
+			};
+		}
+
+		function setCircleStatLineOffsets(root = document) {
+			const comps = Array.from(root.querySelectorAll(".c-circle-stats"));
+			comps.forEach((comp) => {
+				const items = Array.from(comp.querySelectorAll(".circle-stat"));
+				items.forEach((item, index) => {
+					const line = item.querySelector(".circle-stat_line");
+					const svg = item.querySelector("svg");
+					if (!line || !svg) return;
+
+					const w = svg.getBoundingClientRect().width;
+					if (!Number.isFinite(w) || w <= 0) {
+						if (DEBUG) log("line bottom skipped (svg width)", { index, w, item });
+						return;
+					}
+
+					const halfPx = w * 0.5;
+					if (isMobile()) {
+						line.style.left = `${halfPx.toFixed(2)}px`;
+						line.style.bottom = "";
+					} else {
+						line.style.bottom = `${halfPx.toFixed(2)}px`;
+						line.style.left = "";
+					}
+				});
+			});
+		}
+
+		// Ensure vertical lines end at the center of the bg circle on load.
+		// This needs layout, so do immediate + next frame.
+		setCircleStatLineOffsets();
+		requestAnimationFrame(() => setCircleStatLineOffsets());
+
+		// Safe re-init: only one resize listener for this init fn.
+		if (initCircleStats._onResize) {
+			window.removeEventListener("resize", initCircleStats._onResize);
+			initCircleStats._onResize = null;
+		}
+		initCircleStats._onResize = debounceLocal(() => {
+			const nextIsMobile = isMobile();
+			if (initCircleStats._lastIsMobile !== nextIsMobile) {
+				initCircleStats._lastIsMobile = nextIsMobile;
+				// Layout changed enough (line switches orientation) that we should rebuild
+				// the timelines with the correct axis + transform origin.
+				initCircleStats({ start, once });
+				return;
+			}
+
+			setCircleStatLineOffsets();
+		}, 120);
+		window.addEventListener("resize", initCircleStats._onResize, { passive: true });
+
+		function clamp01(n) {
+			if (!Number.isFinite(n)) return 0;
+			return Math.max(0, Math.min(1, n));
+		}
+
+		function isInStartZone(el, startPct = 1) {
+			const rect = el.getBoundingClientRect();
+			const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+			if (!vh) return false;
+			return rect.top <= vh * startPct && rect.bottom >= 0;
+		}
+
+		components.forEach((component) => {
+			const alreadyDone = component.dataset.ccCircleStatsDone === "1";
+			const isMobileComponent = mobileNow;
+			const lineAxis = isMobileComponent ? "scaleX" : "scaleY";
+			const lineOrigin = isMobileComponent ? "left center" : "top center";
+
+			// --- safe re-init (FS rerenders/etc.) ---
+			if (component._ccCircleStats) {
+				log("re-init: killing previous", component);
+				component._ccCircleStats.st?.kill?.();
+				component._ccCircleStats.tl?.kill?.();
+				component._ccCircleStats = null;
+			}
+
+			const items = Array.from(component.querySelectorAll(".circle-stat"));
+			if (!items.length) return;
+
+			const startEl = items[0] || component;
+
+			log("bind component", { component, items: items.length });
+
+			// Tunables (slower by default so it reads clearly)
+			const lineDur = 0.35;
+			const ringDur = 0.9;
+			const lineToRingDelay = 0.14;
+			const itemStagger = 0.28;
+
+			// Baselines
+			items.forEach((item) => {
+				const line = item.querySelector(".circle-stat_line");
+				if (line) {
+					gsap.set(line, {
+						transformOrigin: lineOrigin,
+						opacity: 1,
+						scaleX: isMobileComponent ? (alreadyDone ? 1 : 0) : 1,
+						scaleY: isMobileComponent ? 1 : alreadyDone ? 1 : 0,
+					});
+				}
+
+				const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
+				const bgCirc = item.querySelector("svg > circle.circle-stat_svg-bg");
+				if (dashCirc) {
+					if (!alreadyDone || !bgCirc) {
+						gsap.set(dashCirc, { attr: { r: 0.001, cy: 100 } });
+					} else {
+						const endRaw = parseFloat(item.getAttribute("data-stat-end-value") || "");
+						const maxRaw = parseFloat(item.getAttribute("data-stat-max-value") || "");
+						if (Number.isFinite(endRaw)) {
+							let max = Number.isFinite(maxRaw) ? maxRaw : endRaw;
+							if (max < endRaw) max = endRaw;
+
+							const ratio = clamp01(max > 0 ? endRaw / max : 1);
+							const rBg = parseFloat(bgCirc.getAttribute("r") || "0") || 0;
+							const cyBg = parseFloat(bgCirc.getAttribute("cy") || "0") || 0;
+							const inset = 2;
+							const rMax = Math.max(0, rBg - inset);
+							const rEnd = Math.sqrt(ratio) * rMax;
+							const cyEnd = cyBg + (rMax - rEnd);
+							gsap.set(dashCirc, { attr: { r: rEnd, cy: cyEnd } });
+						}
+					}
+				}
+			});
+
+			const tl = gsap.timeline({ paused: true });
+
+			items.forEach((item, index) => {
+				const t0 = index * itemStagger;
+
+				const line = item.querySelector(".circle-stat_line");
+				const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
+				const bgCirc = item.querySelector("svg > circle.circle-stat_svg-bg");
+
+				if (DEBUG && (!dashCirc || !bgCirc)) {
+					log("missing circles", {
+						index,
+						hasDash: !!dashCirc,
+						hasBg: !!bgCirc,
+						item,
+					});
+				}
+
+				// 1) Line
+				if (line) {
+					tl.to(
+						line,
+						{
+							[lineAxis]: 1,
+							duration: lineDur,
+							ease: "power2.out",
+							overwrite: "auto",
+						},
+						t0
+					);
+				}
+
+				// 2) Ring (area-based scaling) + 3) Count-up trigger
+				if (dashCirc && bgCirc) {
+					const endRaw = parseFloat(item.getAttribute("data-stat-end-value") || "");
+					const maxRaw = parseFloat(item.getAttribute("data-stat-max-value") || "");
+					if (Number.isFinite(endRaw)) {
+						let max = Number.isFinite(maxRaw) ? maxRaw : endRaw;
+						if (max < endRaw) max = endRaw;
+
+						const ratio = clamp01(max > 0 ? endRaw / max : 1);
+
+						const rBg = parseFloat(bgCirc.getAttribute("r") || "0") || 0;
+						const cyBg = parseFloat(bgCirc.getAttribute("cy") || "0") || 0;
+						const inset = 2; // keep inside bg circle so stroke/dash doesn't crop
+						const rMax = Math.max(0, rBg - inset);
+						const rEnd = Math.sqrt(ratio) * rMax;
+						// Anchor the dashed circle's bottom to the bg circle's bottom (minus inset):
+						// (cyEnd + rEnd) = (cyBg + rMax)  =>  cyEnd = cyBg + (rMax - rEnd)
+						const cyEnd = cyBg + (rMax - rEnd);
+
+						const ringStart = t0 + lineDur + lineToRingDelay;
+
+						log("item calc", {
+							index,
+							end: endRaw,
+							max,
+							ratio,
+							rBg,
+							inset,
+							rMax,
+							rEnd,
+							cyBg,
+							cyEnd,
+							ringStart,
+						});
+
+						// Dispatch count-up event right as the ring begins
+						tl.call(
+							() => {
+								try {
+									item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
+								} catch (e) {}
+
+								const el = item.querySelector("[data-motion-countup-event]");
+								// const eventName = el?.getAttribute("data-motion-countup-event")?.trim();
+								// if (!eventName) {
+								// 	log("no countup eventName", { index, item });
+								// 	return;
+								// }
+
+								// log("dispatch countup", { index, eventName, item });
+								ccDispatchCountUpForItem(item, component, {
+									durationSec: ringDur,
+									defaultDelaySec: 0,
+								});
+							},
+							[],
+							ringStart
+						);
+
+						tl.to(
+							dashCirc,
+							{
+								attr: { r: rEnd, cy: cyEnd },
+								duration: ringDur,
+								ease: "power2.out",
+								overwrite: "auto",
+							},
+							ringStart
+						);
+					}
+				}
+			});
+
+			let revealed = false;
+			const reveal = () => {
+				if (revealed) return;
+				revealed = true;
+				component.dataset.ccCircleStatsDone = "1";
+				log("reveal", { component });
+				tl.play(0);
+			};
+
+			if (alreadyDone) revealed = true;
+
+			let st = null;
+			if (!alreadyDone) {
+				st = ScrollTrigger.create({
+					trigger: startEl,
+					start,
+					invalidateOnRefresh: true,
+					once,
+					onEnter: () => {
+						log("ScrollTrigger onEnter", { component, start, startEl });
+						reveal();
+					},
+					onRefresh: (self) => {
+						if (DEBUG)
+							log("ScrollTrigger onRefresh", { progress: self.progress, component, startEl });
+						if (self.progress > 0 || isInStartZone(startEl, 1)) reveal();
+					},
+				});
+
+				// Covers initial load where already past the trigger
+				if (st.progress > 0 || isInStartZone(startEl, 1)) reveal();
+			} else {
+				// Already revealed once; keep end state.
+				tl.progress(1);
+			}
+
+			component._ccCircleStats = { tl, st };
+		});
+
+		ScrollTrigger.refresh();
+	}
+
 	function initScrollReveals() {
 		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
 			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping initScrollReveals()");
@@ -1877,44 +2238,6 @@ function main() {
 			const ringsRoots = Array.from(group.querySelectorAll(".cc-reveal-rings"));
 			ringsRoots.forEach((ringsRoot) => setRingsInitial(ringsRoot));
 
-			function fireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
-				const start = performance.now();
-
-				const fire = () => {
-					window.dispatchEvent(new CustomEvent(eventName, { detail }));
-				};
-
-				// immediate + next frame
-				fire();
-				requestAnimationFrame(fire);
-
-				// keep trying for a bit (covers slow React mount)
-				const timer = setInterval(() => {
-					fire();
-					if (performance.now() - start >= maxMs) clearInterval(timer);
-				}, intervalMs);
-			}
-
-			function dispatchCountUpForItem(item, group, revealDurationSec) {
-				const el = item.querySelector("[data-motion-countup-event]");
-				const eventName = el?.getAttribute("data-motion-countup-event")?.trim();
-				if (!eventName) return;
-
-				// Optional override per element:
-				// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
-				const overrideDelaySec = parseFloat(el?.getAttribute("data-motion-countup-delay") || "");
-				const delaySec = Number.isFinite(overrideDelaySec)
-					? overrideDelaySec
-					: Math.max(0, (revealDurationSec || 0) * 0.5); // default: half the reveal duration
-
-				// Prevent duplicate timers if something re-inits quickly
-				if (item._ccCountupTimeout) clearTimeout(item._ccCountupTimeout);
-
-				item._ccCountupTimeout = setTimeout(() => {
-					fireEventWithRetry(eventName, { trigger: group, item });
-					item._ccCountupTimeout = null;
-				}, Math.round(delaySec * 1000));
-			}
 			const tl = gsap.timeline({ paused: true });
 
 			items.forEach((item, i) => {
@@ -1937,7 +2260,7 @@ function main() {
 								item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
 							} catch (e) {}
 
-							dispatchCountUpForItem(item, group, duration); // ✅ delayed dispatch
+							ccDispatchCountUpForItem(item, group, { durationSec: duration }); // ✅ delayed dispatch
 						},
 					},
 					t
@@ -2864,27 +3187,89 @@ function main() {
 		pinSolutionCardsMobile._mm = mm;
 
 		mm.add("(max-width: 767px)", () => {
-			const cards = Array.from(wrapper.querySelectorAll(".sol-card"));
+			const cards = Array.from(wrapper.querySelectorAll(".sol-listing_list-item"));
 			if (cards.length < 2) return;
+
+			const DEBUG_SOL_STACK =
+				localStorage.getItem("ccDebugSolStack") === "1" || window.__CC_DEBUG_SOL_STACK === true;
 
 			const triggers = [];
 			const tweens = [];
 
+			const SCALE_STEP = 0.06; // how much smaller each stacked layer gets
+			const MIN_SCALE = 0.72; // clamp so it never gets too tiny
+			const BG_DARKEN_STEP = 0.1; // how much darker each stacked layer gets
+			const MAX_BG_DARKEN = 0.55; // clamp so it doesn't go fully black
+
 			const lastCard = cards[cards.length - 1];
 
 			// nav height + 2rem
-			const getPinOffset = () => {
+			const getPinOffset = (i) => {
 				const nav = document.querySelector(".nav");
 				const navH = nav ? nav.getBoundingClientRect().height : 0;
 				const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16;
+				if (i !== undefined) return Math.round(navH + 2 * remPx) + i * 10;
 				return Math.round(navH + 2 * remPx);
 			};
 
-			const pinStart = () => `top top+=${getPinOffset()}`;
+			let cardHeights = [];
+
+			const calculateCardHeights = () => {
+				cardHeights = cards.map((card) => card.offsetHeight);
+			};
+
+			calculateCardHeights();
+			ScrollTrigger.addEventListener("refreshInit", calculateCardHeights);
+
+			function clamp(n, min, max) {
+				return Math.min(max, Math.max(min, n));
+			}
+
+			function parseRgbColor(str) {
+				if (!str) return null;
+				const m = String(str)
+					.trim()
+					.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
+				if (!m) return null;
+				return [Number(m[1]) || 0, Number(m[2]) || 0, Number(m[3]) || 0];
+			}
+
+			function ensureBg(card) {
+				if (!card) return null;
+				const bg = card.querySelector(".sol-card_bg");
+				if (!bg) return null;
+				card._ccSolStack ||= {};
+				card._ccSolStack.bg = bg;
+
+				// Capture base/background once so we darken relative to it.
+				if (!bg.dataset.ccBaseBg) {
+					const computed = getComputedStyle(bg).backgroundColor;
+					const rgb = parseRgbColor(computed) || [255, 255, 255];
+					bg.dataset.ccBaseBg = rgb.join(",");
+					bg.dataset.ccOrigBgStyle = bg.style.backgroundColor || "";
+				}
+				return bg;
+			}
+
+			function ensureStackTarget(card) {
+				if (!card) return null;
+				card._ccSolStack ||= {};
+				if (card._ccSolStack.target) return card._ccSolStack.target;
+
+				// IMPORTANT: don't scale the pinned element itself (ScrollTrigger pin uses transforms).
+				// Scale an inner wrapper instead.
+				const target = card.querySelector(".sol-card");
+				card._ccSolStack.target = target;
+				return target;
+			}
 
 			// Layering
 			cards.forEach((card, i) => {
-				gsap.set(card, { zIndex: i + 1, transformOrigin: "50% 0%" });
+				gsap.set(card, { zIndex: i + 1 });
+				const target = ensureStackTarget(card);
+				if (target) gsap.set(target, { transformOrigin: "50% 0%" });
+				ensureBg(card);
+				// gsap.set(card, { opacity: 0.5 });
 			});
 
 			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
@@ -2894,10 +3279,12 @@ function main() {
 				const st = ScrollTrigger.create({
 					id: `ccSolStackPin_${i}`,
 					trigger: card,
-					start: pinStart,
+					start: () => {
+						return `top top+=${getPinOffset(i)}`;
+					},
 					endTrigger: lastCard,
 					// release when the LAST card reaches the same offset line
-					end: () => `top top+=${getPinOffset()}`,
+					end: () => `top top+=${getPinOffset(i)}`,
 					pin: true,
 					pinSpacing: false,
 					anticipatePin: 1,
@@ -2906,45 +3293,69 @@ function main() {
 				triggers.push(st);
 			});
 
-			// “Behind” card effect: when a new card approaches, scale + tint the previous pinned card
+			// Stacking scale: as each new card approaches, progressively shrink ALL prior pinned cards
 			cards.forEach((incoming, i) => {
 				if (i === 0) return;
 
+				const affected = cards.slice(0, i); // everything already pinned/stacked
 				const prevCard = cards[i - 1];
-				const prevBg = prevCard.querySelector(".sol-card_bg");
 
 				const tl = gsap.timeline({
 					scrollTrigger: {
 						trigger: incoming,
-						start: "top 25%",
-						toggleActions: "play none none reverse",
+						// Start when the INCOMING card's top reaches the bottom of the PREVIOUS pinned card.
+						// The previous pinned card sits at getPinOffset(i-1), so its bottom line is offset + height.
+						start: () => {
+							const prevTarget = ensureStackTarget(prevCard);
+							const prevH =
+								(prevTarget && prevTarget.getBoundingClientRect().height) ||
+								prevCard?.offsetHeight ||
+								cardHeights[i - 1] ||
+								0;
+							const line = getPinOffset(i - 1) + prevH;
+							return `top top+=${Math.round(line)}`;
+						},
+						// Finish by the time the incoming card reaches its own pin line.
+						end: () => `top top+=${getPinOffset(i)}`,
+						scrub: 0.4,
 						invalidateOnRefresh: true,
+						markers: DEBUG_SOL_STACK,
 					},
 				});
 
-				tl.to(
-					prevCard,
-					{
-						scale: 0.85,
-						duration: 0.4,
-						ease: "power1.out",
-						overwrite: "auto",
-					},
-					0
-				);
-
-				// if (prevBg) {
-				// 	tl.to(
-				// 		prevBg,
-				// 		{
-				// 			backgroundColor: "var(--_color---blue--pale)",
-				// 			duration: 0.2,
-				// 			ease: "linear",
-				// 			overwrite: "auto",
-				// 		},
-				// 		0
-				// 	);
-				// }
+				affected.forEach((card, idx) => {
+					const layersBehindIncoming = i - idx;
+					const targetScale = Math.max(MIN_SCALE, 1 - layersBehindIncoming * SCALE_STEP);
+					const darken = clamp(layersBehindIncoming * BG_DARKEN_STEP, 0, MAX_BG_DARKEN);
+					const target = ensureStackTarget(card);
+					const bg = ensureBg(card);
+					tl.to(
+						target,
+						{
+							scale: targetScale,
+							duration: 0.4,
+							ease: "power1.out",
+							overwrite: "auto",
+						},
+						0
+					);
+					if (bg && bg.dataset.ccBaseBg) {
+						const base = bg.dataset.ccBaseBg.split(",").map((n) => Number(n) || 0);
+						const r = Math.round((base[0] || 0) * (1 - darken));
+						const g = Math.round((base[1] || 0) * (1 - darken));
+						const b = Math.round((base[2] || 0) * (1 - darken));
+						tl.to(
+							bg,
+							{
+								backgroundColor: `rgb(${r}, ${g}, ${b})`,
+								duration: 0.4,
+								ease: "power1.out",
+								overwrite: "auto",
+							},
+							0
+						);
+					}
+				});
 
 				tweens.push(tl);
 				triggers.push(tl.scrollTrigger);
@@ -2969,11 +3380,24 @@ function main() {
 			return () => {
 				wrapper.removeEventListener("click", onClick);
 				if (ro) ro.disconnect();
+				ScrollTrigger.removeEventListener("refreshInit", calculateCardHeights);
 
 				triggers.forEach((st) => st?.kill?.());
 				tweens.forEach((t) => t?.kill?.());
 
-				cards.forEach((card) => gsap.set(card, { clearProps: "zIndex,transform" }));
+				cards.forEach((card) => {
+					gsap.set(card, { clearProps: "zIndex" });
+					const target = card._ccSolStack?.target;
+					if (target) gsap.set(target, { clearProps: "transform,transformOrigin" });
+					const bg = card._ccSolStack?.bg;
+					if (bg) {
+						gsap.set(bg, { clearProps: "backgroundColor" });
+						bg.style.backgroundColor = bg.dataset.ccOrigBgStyle || "";
+						delete bg.dataset.ccOrigBgStyle;
+						delete bg.dataset.ccBaseBg;
+					}
+					if (card._ccSolStack) delete card._ccSolStack;
+				});
 			};
 		});
 	}
@@ -2990,6 +3414,7 @@ function main() {
 	caseStudiesSimpleCarousel();
 	solsCarousel();
 	orbit();
+	initCircleStats();
 	initScrollReveals();
 	expandSolutionServiceTags();
 	pinSolutionCardsMobile();
