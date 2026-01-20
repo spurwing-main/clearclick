@@ -31,6 +31,48 @@ function main() {
 		return log;
 	}
 
+	function emblaCanScroll(api, direction) {
+		if (!api) return false;
+		const dir = direction === "prev" ? "prev" : "next";
+		const key = dir === "prev" ? "canScrollPrev" : "canScrollNext";
+
+		const maybe = api[key];
+		if (typeof maybe === "function") {
+			try {
+				return !!maybe.call(api);
+			} catch (e) {}
+		} else if (typeof maybe === "boolean") {
+			return maybe;
+		}
+
+		// Fallback for older/newer Embla builds: infer from selected snap + loop option.
+		let count = 0;
+		try {
+			if (typeof api.scrollSnapList === "function") count = api.scrollSnapList().length;
+		} catch (e) {}
+		if (!count) {
+			try {
+				if (typeof api.slideNodes === "function") count = api.slideNodes().length;
+			} catch (e) {}
+		}
+		if (count <= 1) return false;
+
+		let loop = null;
+		try {
+			loop = !!api.internalEngine?.().options?.loop;
+		} catch (e) {
+			loop = null;
+		}
+		if (loop === true) return true;
+
+		let selected = 0;
+		try {
+			if (typeof api.selectedScrollSnap === "function") selected = api.selectedScrollSnap();
+		} catch (e) {}
+
+		return dir === "prev" ? selected > 0 : selected < count - 1;
+	}
+
 	function homeHeroCorners() {
 		// on scroll, animate bottom corner radius of .c-home-hero from 0 to 3rem
 		const hero = document.querySelector(".c-home-hero");
@@ -427,8 +469,8 @@ function main() {
 			function setArrowsEnabled() {
 				if (!embla) return;
 
-				const canPrev = embla.canScrollPrev();
-				const canNext = embla.canScrollNext();
+				const canPrev = emblaCanScroll(embla, "prev");
+				const canNext = emblaCanScroll(embla, "next");
 
 				if (prevBtn) prevBtn.disabled = !canPrev;
 				if (nextBtn) nextBtn.disabled = !canNext;
@@ -1238,8 +1280,8 @@ function main() {
 
 			function setArrowsEnabled() {
 				if (!embla) return;
-				const canPrev = embla.canScrollPrev();
-				const canNext = embla.canScrollNext();
+				const canPrev = emblaCanScroll(embla, "prev");
+				const canNext = emblaCanScroll(embla, "next");
 
 				if (prevBtn) prevBtn.disabled = !canPrev;
 				if (nextBtn) nextBtn.disabled = !canNext;
@@ -1805,6 +1847,424 @@ function main() {
 		applyAccordionState();
 	}
 
+	function simpleTabs() {
+		const prefersReduced =
+			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+		const components = Array.from(document.querySelectorAll(".c-simple-tabs"));
+		if (!components.length) return;
+
+		const log = createDebugLog("simpleTabs");
+		log("init", {
+			components: components.length,
+			prefersReduced,
+		});
+
+		const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+
+		components.forEach((component, componentIndex) => {
+			// Safe re-init (FS renders / Webflow rerenders)
+			if (component._ccSimpleTabs?.cleanup) {
+				log("cleanup prior instance", { componentIndex });
+				try {
+					component._ccSimpleTabs.cleanup();
+				} catch (e) {}
+			}
+
+			const panelsWrap = component.querySelector(".simple-tabs_panels");
+			const panels = gsap.utils.toArray(".simple-tabs_panel", component);
+			const tabList = component.querySelector(".simple-tabs_controls .simple-tabs_tab-list");
+			const tabListWrap = component.querySelector(
+				".simple-tabs_controls .simple-tabs_tab-list-wrap"
+			);
+			const allMedia = gsap.utils.toArray(".simple-tabs_media", component);
+			const allContent = gsap.utils.toArray(".simple-tabs_content", component);
+
+			if (!panelsWrap || !panels.length || !tabList) {
+				log("skip: missing required elements", {
+					componentIndex,
+					panelsWrap: !!panelsWrap,
+					panels: panels.length,
+					tabList: !!tabList,
+				});
+				return;
+			}
+			if (!tabListWrap) {
+				log("skip: missing .simple-tabs_tab-list-wrap", { componentIndex });
+				return;
+			}
+
+			log("component", {
+				componentIndex,
+				panels: panels.length,
+			});
+
+			// Ensure predictable panel visibility regardless of CSS.
+			panels.forEach((p, i) => {
+				gsap.set(p, { display: i === 0 ? "block" : "none" });
+			});
+
+			// Build tab buttons from panel data-tab-name
+			tabList.innerHTML = "";
+			tabList.setAttribute("role", "tablist");
+
+			const tabButtons = panels.map((panel, index) => {
+				const rawName = panel.getAttribute("data-tab-name") || "";
+				const label = rawName.trim() || `Tab ${index + 1}`;
+
+				const btn = document.createElement("button");
+				btn.type = "button";
+				btn.className = "simple-tabs_tab";
+				btn.textContent = label;
+				btn.setAttribute("role", "tab");
+				btn.setAttribute("aria-selected", index === 0 ? "true" : "false");
+				btn.dataset.index = String(index);
+
+				// panel/tab linking (optional but nice)
+				if (!panel.id) panel.id = `simple-tabs_panel_${Math.random().toString(36).slice(2)}`;
+				btn.setAttribute("aria-controls", panel.id);
+				panel.setAttribute("role", "tabpanel");
+				panel.setAttribute("aria-labelledby", `${panel.id}__tab`);
+				btn.id = `${panel.id}__tab`;
+
+				tabList.appendChild(btn);
+				return btn;
+			});
+			log(
+				"built tabs",
+				tabButtons.map((b) => b.textContent)
+			);
+
+			let activeIndex = 0;
+			let isAnimating = false;
+			let activeTl = null;
+			let draggable = null;
+			let ro = null;
+			let rafMeasure = 0;
+
+			const CLS_OVERFLOW = "has-overflow";
+			const CLS_OVERFLOW_LEFT = "has-overflow-left";
+			const CLS_OVERFLOW_RIGHT = "has-overflow-right";
+			const EPS = 1; // px tolerance to avoid flicker at bounds
+
+			function getBounds() {
+				const viewportW = tabListWrap.getBoundingClientRect().width;
+				const contentW = tabList.scrollWidth;
+				const minX = Math.min(0, viewportW - contentW);
+				return { minX, maxX: 0, viewportW, contentW };
+			}
+
+			function getTabListX() {
+				const raw = gsap.getProperty(tabList, "x");
+				if (typeof raw === "number") return raw;
+				const n = parseFloat(String(raw ?? "0"));
+				return Number.isFinite(n) ? n : 0;
+			}
+
+			function updateOverflowClasses() {
+				const { minX, maxX, viewportW, contentW } = getBounds();
+				const hasOverflow = contentW > viewportW + 2;
+
+				tabListWrap.classList.toggle(CLS_OVERFLOW, hasOverflow);
+
+				if (!hasOverflow) {
+					tabListWrap.classList.remove(CLS_OVERFLOW_LEFT, CLS_OVERFLOW_RIGHT);
+					return;
+				}
+
+				const x = getTabListX();
+				const canScrollLeft = x < maxX - EPS; // not at left-most bound (x ~ 0)
+				const canScrollRight = x > minX + EPS; // not at right-most bound (x ~ minX)
+
+				tabListWrap.classList.toggle(CLS_OVERFLOW_LEFT, canScrollLeft);
+				tabListWrap.classList.toggle(CLS_OVERFLOW_RIGHT, canScrollRight);
+			}
+
+			function applyDraggableIfNeeded() {
+				const { minX, maxX, viewportW, contentW } = getBounds();
+				const hasOverflow = contentW > viewportW + 2;
+				log("overflow check", { viewportW, contentW, hasOverflow, minX, maxX });
+
+				if (!hasOverflow) {
+					if (draggable) {
+						log("draggable: kill (no overflow)");
+						try {
+							draggable.kill();
+						} catch (e) {}
+						draggable = null;
+					}
+					gsap.set(tabList, { x: 0 });
+					updateOverflowClasses();
+					return;
+				}
+
+				if (typeof Draggable === "undefined") {
+					// Still apply classes even if drag isn't available.
+					log("draggable: missing (Draggable not loaded)");
+					updateOverflowClasses();
+					return;
+				}
+
+				if (!draggable) {
+					log("draggable: create", { minX, maxX });
+					draggable = Draggable.create(tabList, {
+						type: "x",
+						dragClickables: true,
+						allowNativeTouchScrolling: true,
+						bounds: { minX, maxX },
+						onDrag: updateOverflowClasses,
+						onRelease: updateOverflowClasses,
+						onThrowUpdate: updateOverflowClasses,
+					})?.[0];
+				}
+
+				if (draggable) {
+					try {
+						draggable.applyBounds({ minX, maxX });
+						draggable.update();
+					} catch (e) {}
+				}
+				updateOverflowClasses();
+			}
+
+			function scrollTabIntoView(index, { animate = true } = {}) {
+				const btn = tabButtons[index];
+				if (!btn) return;
+
+				const { minX, maxX } = getBounds();
+				const currentX = gsap.getProperty(tabList, "x");
+				const targetX = clamp(-btn.offsetLeft, minX, maxX);
+				log("scroll tab", { index, label: btn.textContent, currentX, targetX });
+
+				if (Math.abs(targetX - currentX) < 1) return;
+
+				if (animate && !prefersReduced) {
+					gsap.to(tabList, {
+						x: targetX,
+						duration: 0.45,
+						ease: "power2.out",
+						overwrite: "auto",
+						onUpdate: () => {
+							draggable?.update?.();
+							updateOverflowClasses();
+						},
+						onComplete: updateOverflowClasses,
+					});
+				} else {
+					gsap.set(tabList, { x: targetX });
+					draggable?.update?.();
+					updateOverflowClasses();
+				}
+			}
+
+			function setActiveTab(index) {
+				tabButtons.forEach((btn, i) => {
+					btn.classList.toggle("is-active", i === index);
+					btn.setAttribute("aria-selected", i === index ? "true" : "false");
+				});
+			}
+
+			function showPanel(index, { animate = true } = {}) {
+				if (!Number.isFinite(index)) return;
+				if (index < 0 || index >= panels.length) return;
+				if (index === activeIndex) {
+					scrollTabIntoView(index, { animate });
+					return;
+				}
+
+				const fromIndex = activeIndex;
+				const toIndex = index;
+
+				const fromPanel = panels[fromIndex];
+				const toPanel = panels[toIndex];
+				if (!fromPanel || !toPanel) return;
+
+				const measureHeight = (el) => {
+					const height = Math.ceil(el.getBoundingClientRect().height);
+					return height;
+				};
+
+				// If a timeline is mid-flight, kill it and hide the outgoing panel it was responsible for
+				if (activeTl) {
+					const prevOutgoing = activeTl._ccOutgoingPanel;
+					try {
+						activeTl.kill();
+					} catch (e) {}
+					activeTl = null;
+					isAnimating = false;
+					if (prevOutgoing) gsap.set(prevOutgoing, { display: "none" });
+				}
+
+				setActiveTab(toIndex);
+				scrollTabIntoView(toIndex, { animate: true });
+
+				const fromMedia = fromPanel.querySelector(".simple-tabs_panel-media");
+				const fromContent = fromPanel.querySelector(".simple-tabs_panel-content");
+				const toMedia = toPanel.querySelector(".simple-tabs_panel-media");
+				const toContent = toPanel.querySelector(".simple-tabs_panel-content");
+
+				// Keep both in layout during transition
+				gsap.set(fromPanel, { display: "block" });
+				// gsap.set(toPanel, { display: "block" });
+
+				gsap.killTweensOf([fromMedia, fromContent, toMedia, toContent, panelsWrap]);
+
+				// get height of toPanel. We do this by making it absolutely positioned temporarily.
+				gsap.set(toPanel, {
+					position: "absolute",
+					left: 0,
+					top: 0,
+					right: 0,
+					visibility: "hidden",
+					display: "block",
+				});
+				const toPanelH = measureHeight(toPanel);
+				gsap.set(toPanel, { clearProps: "position,visibility,display,left,right,top" });
+
+				// and measure height of fromPanel
+				const fromPanelH = measureHeight(fromPanel);
+
+				// log the heights
+				log("panel heights", {
+					fromIndex,
+					toIndex,
+					fromPanelH,
+					toPanelH,
+				});
+
+				// Reduced/instant
+				if (prefersReduced || !animate) {
+					gsap.set(fromPanel, { display: "none" });
+					gsap.set(toPanel, { display: "block" });
+
+					// snap wrapper height (optional)
+					gsap.set(panelsWrap, { height: "auto" });
+
+					if (toMedia) gsap.set(toMedia, { autoAlpha: 1, scale: 1, overwrite: "auto" });
+					if (toContent) gsap.set(toContent, { autoAlpha: 1, y: 0, overwrite: "auto" });
+
+					if (fromMedia) gsap.set(fromMedia, { autoAlpha: 0, scale: 0.985, overwrite: "auto" });
+					if (fromContent) gsap.set(fromContent, { autoAlpha: 0, y: -12, overwrite: "auto" });
+
+					activeIndex = toIndex;
+					return;
+				}
+
+				isAnimating = true;
+				activeIndex = toIndex; // important for rapid clicks
+
+				// Prep incoming start pose
+				if (toMedia) gsap.set(toMedia, { autoAlpha: 0, scale: 0.985, overwrite: "auto" });
+				if (toContent) gsap.set(toContent, { autoAlpha: 0, y: -5, overwrite: "auto" });
+
+				const outgoingPanel = fromPanel;
+
+				activeTl = gsap.timeline({
+					defaults: { ease: "power2.out", overwrite: "auto" },
+					onComplete: () => {
+						gsap.set(outgoingPanel, { display: "none" });
+						// Return wrapper to auto so it responds to resizes/font loads
+						gsap.set(panelsWrap, { height: "auto" });
+						isAnimating = false;
+						activeTl = null;
+					},
+				});
+				activeTl._ccOutgoingPanel = outgoingPanel;
+
+				// if toPanelH is greater than fromPanelH, expand first, otherwise do the rest of the anim first
+				let panelHDone = false;
+
+				if (toPanelH > fromPanelH) {
+					activeTl.to(panelsWrap, { height: toPanelH, duration: 0.35 }, 0);
+					panelHDone = true;
+				}
+
+				// Outgoing out
+				if (fromMedia) activeTl.to(fromMedia, { autoAlpha: 0, scale: 0.985, duration: 0.28 }, 0);
+				if (fromContent) activeTl.to(fromContent, { autoAlpha: 0, y: -12, duration: 0.24 }, 0);
+
+				// Incoming in
+				activeTl.set(toPanel, { display: "block" }, 0.18);
+				if (toMedia) activeTl.to(toMedia, { autoAlpha: 1, scale: 1, duration: 0.55 }, 0.18);
+				if (toContent) activeTl.to(toContent, { autoAlpha: 1, y: 0, duration: 0.45 }, 0.22);
+
+				// Height tween for shrinking case
+				if (toPanelH < fromPanelH && !panelHDone) {
+					activeTl.to(panelsWrap, { height: toPanelH, duration: 0.35 }, 0.4);
+				}
+			}
+
+			function onTabActivate(e) {
+				const btn = e.target.closest(".simple-tabs_tab");
+				if (!btn || !tabList.contains(btn)) return;
+				const idx = parseInt(btn.dataset.index || "0", 10);
+				if (!Number.isFinite(idx)) return;
+				showPanel(idx, { animate: true });
+			}
+
+			function onKeyDown(e) {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const btn = e.target.closest(".simple-tabs_tab");
+				if (!btn || !tabList.contains(btn)) return;
+				e.preventDefault();
+				const idx = parseInt(btn.dataset.index || "0", 10);
+				if (!Number.isFinite(idx)) return;
+				showPanel(idx, { animate: true });
+			}
+
+			// Initial state
+			log("initial state", { activeIndex: 0 });
+			setActiveTab(0);
+			scrollTabIntoView(0, { animate: false });
+			applyDraggableIfNeeded();
+			updateOverflowClasses();
+
+			tabList.addEventListener("click", onTabActivate);
+			tabList.addEventListener("keydown", onKeyDown);
+
+			const scheduleMeasure = () => {
+				if (rafMeasure) cancelAnimationFrame(rafMeasure);
+				rafMeasure = requestAnimationFrame(() => {
+					rafMeasure = 0;
+					log("measure", { activeIndex });
+					applyDraggableIfNeeded();
+					scrollTabIntoView(activeIndex, { animate: false });
+					updateOverflowClasses();
+				});
+			};
+
+			// React to layout changes that affect overflow
+			window.addEventListener("resize", scheduleMeasure);
+			window.addEventListener("load", scheduleMeasure, { once: true });
+			if (document.fonts && typeof document.fonts.ready?.then === "function") {
+				document.fonts.ready.then(scheduleMeasure).catch(() => {});
+			}
+			if (typeof ResizeObserver !== "undefined") {
+				ro = new ResizeObserver(() => scheduleMeasure());
+				try {
+					ro.observe(tabListWrap);
+				} catch (e) {}
+			}
+
+			component._ccSimpleTabs = {
+				cleanup: () => {
+					tabList.removeEventListener("click", onTabActivate);
+					tabList.removeEventListener("keydown", onKeyDown);
+					window.removeEventListener("resize", scheduleMeasure);
+					if (rafMeasure) cancelAnimationFrame(rafMeasure);
+					ro?.disconnect?.();
+					activeTl?.kill?.();
+					try {
+						draggable?.kill?.();
+					} catch (e) {}
+					try {
+						tabListWrap.classList.remove(CLS_OVERFLOW, CLS_OVERFLOW_LEFT, CLS_OVERFLOW_RIGHT);
+					} catch (e) {}
+				},
+			};
+		});
+	}
+
 	// --------- Finsweet hook: rerun init on FS render  ----------
 	function hookFinsweetRenders() {
 		window.FinsweetAttributes ||= [];
@@ -1821,6 +2281,7 @@ function main() {
 							"afterRender",
 							debounce(() => {
 								initAllTabs();
+								simpleTabs();
 								initScrollReveals();
 								caseStudiesSimpleCarousel();
 								solsCarousel();
@@ -1835,6 +2296,7 @@ function main() {
 							"renderitems",
 							debounce(() => {
 								initAllTabs();
+								simpleTabs();
 								initScrollReveals();
 								caseStudiesSimpleCarousel();
 								solsCarousel();
@@ -1846,6 +2308,7 @@ function main() {
 
 				// run once when FS list is ready
 				initAllTabs();
+				simpleTabs();
 				initScrollReveals();
 				caseStudiesSimpleCarousel();
 				solsCarousel();
@@ -2056,7 +2519,11 @@ function main() {
 
 				const body = item.querySelector(".circle-stat_body");
 				if (body) {
-					gsap.set(body, { autoAlpha: itemDone ? 1 : 0 });
+					gsap.set(body, { autoAlpha: itemDone ? 1 : 0, y: itemDone ? 0 : bodyY });
+				}
+				const statEl = item.querySelector(".circle-stat_stat");
+				if (statEl) {
+					gsap.set(statEl, { autoAlpha: itemDone ? 1 : 0, y: itemDone ? 0 : statY });
 				}
 
 				const dashCirc = item.querySelector("svg > circle.circle-stat_svg-dash-circ");
@@ -2117,23 +2584,23 @@ function main() {
 
 					// 0) Fade-ins (bg circle + body)
 					if (bgCirc) {
-						itemTl.from(
+						itemTl.to(
 							bgCirc,
-							{ opacity: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 							0
 						);
 					}
 					if (body) {
-						itemTl.from(
+						itemTl.to(
 							body,
-							{ autoAlpha: 0, y: bodyY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 							0
 						);
 					}
 					if (statEl) {
-						itemTl.from(
+						itemTl.to(
 							statEl,
-							{ autoAlpha: 0, y: statY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 							0
 						);
 					}
@@ -2303,23 +2770,23 @@ function main() {
 
 				// 0) Fade-ins (bg circle + body)
 				if (bgCirc) {
-					itemTl.from(
+					itemTl.to(
 						bgCirc,
-						{ opacity: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 						0
 					);
 				}
 				if (body) {
-					itemTl.from(
+					itemTl.to(
 						body,
-						{ autoAlpha: 0, y: bodyY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 						0
 					);
 				}
 				if (statEl) {
-					itemTl.from(
+					itemTl.to(
 						statEl,
-						{ autoAlpha: 0, y: statY, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
 						0
 					);
 				}
@@ -3422,210 +3889,241 @@ function main() {
 			const DEBUG_SOL_STACK =
 				localStorage.getItem("ccDebugSolStack") === "1" || window.__CC_DEBUG_SOL_STACK === true;
 
-			const triggers = [];
-			const tweens = [];
+			// ----------------------------
+			// Tuning
+			// ----------------------------
+			const SCALE_STEP = 0.06; // per "layer above"
+			const MIN_SCALE = 0.72;
 
-			const SCALE_STEP = 0.06; // how much smaller each stacked layer gets
-			const MIN_SCALE = 0.72; // clamp so it never gets too tiny
-			const BG_DARKEN_STEP = 0.1; // how much darker each stacked layer gets
-			const MAX_BG_DARKEN = 0.55; // clamp so it doesn't go fully black
+			// Background opacity (we fade the .sol-card_bg element)
+			const OPACITY_STEP = 0.08; // per "layer above"
+			const MIN_BG_OPACITY = 0.45;
+
+			// Start trigger: top of card n+1 hits (pinOffset(n) + 0.75 * height(n))
+			const START_FRACTION_FROM_TOP = 0.75;
 
 			const lastCard = cards[cards.length - 1];
 
-			// nav height + 2rem
-			const getPinOffset = (i) => {
+			const triggers = [];
+			const timelines = [];
+
+			const debounce = (fn, wait = 100) => {
+				let t;
+				return (...args) => {
+					clearTimeout(t);
+					t = setTimeout(() => fn(...args), wait);
+				};
+			};
+
+			const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
+
+			// nav height + 2rem (+ small per-card bump so pinned items don't sit on the exact same line)
+			const getPinOffset = (i = 0) => {
 				const nav = document.querySelector(".nav");
 				const navH = nav ? nav.getBoundingClientRect().height : 0;
 				const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16;
-				if (i !== undefined) return Math.round(navH + 2 * remPx) + i * 10;
-				return Math.round(navH + 2 * remPx);
+				return Math.round(navH + 2 * remPx) + i * 10;
 			};
 
-			let cardHeights = [];
+			// Absolute top helper (stable for numeric start/end)
+			const getScrollY = () => window.pageYOffset || document.documentElement.scrollTop || 0;
 
+			const absTop = (el) => getScrollY() + el.getBoundingClientRect().top;
+
+			// Stable heights (unscaled)
+			let cardHeights = [];
 			const calculateCardHeights = () => {
 				cardHeights = cards.map((card) => card.offsetHeight);
 			};
-
 			calculateCardHeights();
 			ScrollTrigger.addEventListener("refreshInit", calculateCardHeights);
 
-			function clamp(n, min, max) {
-				return Math.min(max, Math.max(min, n));
-			}
+			const ensure = (card) => {
+				card._ccSolStack ||= {};
+				return card._ccSolStack;
+			};
 
-			function parseRgbColor(str) {
-				if (!str) return null;
-				const m = String(str)
-					.trim()
-					.match(/rgba?\((\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
-				if (!m) return null;
-				return [Number(m[1]) || 0, Number(m[2]) || 0, Number(m[3]) || 0];
-			}
+			const getInner = (card) => {
+				const s = ensure(card);
+				if ("inner" in s) return s.inner;
+				s.inner = card.querySelector(".sol-card") || null;
+				return s.inner;
+			};
 
-			function ensureBg(card) {
-				if (!card) return null;
+			const getBg = (card) => {
+				const s = ensure(card);
+				if ("bg" in s) return s.bg;
+
 				const bg = card.querySelector(".sol-card_bg");
-				if (!bg) return null;
-				card._ccSolStack ||= {};
-				card._ccSolStack.bg = bg;
+				s.bg = bg || null;
 
-				// Capture base/background once so we darken relative to it.
-				if (!bg.dataset.ccBaseBg) {
-					const computed = getComputedStyle(bg).backgroundColor;
-					const rgb = parseRgbColor(computed) || [255, 255, 255];
-					bg.dataset.ccBaseBg = rgb.join(",");
-					bg.dataset.ccOrigBgStyle = bg.style.backgroundColor || "";
+				if (bg) {
+					// Capture original inline opacity once
+					if (s.origBgOpacity == null) s.origBgOpacity = bg.style.opacity || "";
+					// Ensure we have a numeric base opacity to tween from
+					const computed = getComputedStyle(bg).opacity;
+					s.baseBgOpacity = Number.isFinite(parseFloat(computed)) ? parseFloat(computed) : 1;
 				}
-				return bg;
-			}
 
-			function ensureStackTarget(card) {
-				if (!card) return null;
-				card._ccSolStack ||= {};
-				if (card._ccSolStack.target) return card._ccSolStack.target;
+				return s.bg;
+			};
 
-				// IMPORTANT: don't scale the pinned element itself (ScrollTrigger pin uses transforms).
-				// Scale an inner wrapper instead.
-				const target = card.querySelector(".sol-card");
-				card._ccSolStack.target = target;
-				return target;
-			}
-
-			// Layering
+			// Prep layering + transform origins
 			cards.forEach((card, i) => {
 				gsap.set(card, { zIndex: i + 1 });
-				const target = ensureStackTarget(card);
-				if (target) gsap.set(target, { transformOrigin: "50% 0%" });
-				ensureBg(card);
-				// gsap.set(card, { opacity: 0.5 });
+
+				const inner = getInner(card);
+				if (inner) gsap.set(inner, { transformOrigin: "50% 0%", willChange: "transform" });
+
+				const bg = getBg(card);
+				if (bg) gsap.set(bg, { willChange: "opacity" });
 			});
 
-			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
-
-			// Pin all but the last card
+			// ----------------------------
+			// Pins (all but last)
+			// ----------------------------
 			cards.slice(0, -1).forEach((card, i) => {
 				const st = ScrollTrigger.create({
 					id: `ccSolStackPin_${i}`,
 					trigger: card,
-					start: () => {
-						return `top top+=${getPinOffset(i)}`;
-					},
+					start: () => `top top+=${getPinOffset(i)}`,
 					endTrigger: lastCard,
-					// release when the LAST card reaches the same offset line
-					end: () => `top top+=${getPinOffset(i)}`,
+					end: () => `top top+=${getPinOffset(i)}`, // release when LAST card reaches same offset line
 					pin: true,
 					pinSpacing: false,
 					anticipatePin: 1,
 					invalidateOnRefresh: true,
+					refreshPriority: 1, // ✅ pins refresh first
+					markers: DEBUG_SOL_STACK,
 				});
 				triggers.push(st);
 			});
 
-			// Stacking scale: as each new card approaches, progressively shrink ALL prior pinned cards
-			cards.forEach((incoming, i) => {
-				if (i === 0) return;
+			// ----------------------------
+			// Anim timelines (one per card except last)
+			// ----------------------------
+			// ✅ Key change:
+			// Do NOT use nextCard as the trigger element, because nextCard gets pinned later.
+			// Instead use numeric absolute start/end positions computed from element tops.
+			cards.slice(0, -1).forEach((cardN, n) => {
+				const nextCard = cards[n + 1];
+				if (!nextCard) return;
 
-				const affected = cards.slice(0, i); // everything already pinned/stacked
-				const prevCard = cards[i - 1];
+				const inner = getInner(cardN);
+				const bg = getBg(cardN);
+				if (!inner && !bg) return;
+
+				const maxLayersAbove = cards.length - 1 - n;
+
+				const targetScale = clamp(1 - maxLayersAbove * SCALE_STEP, MIN_SCALE, 1);
+				const baseOpacity = ensure(cardN).baseBgOpacity ?? 1;
+				const targetOpacity = clamp(
+					baseOpacity - maxLayersAbove * OPACITY_STEP,
+					MIN_BG_OPACITY,
+					baseOpacity
+				);
+
+				// Ensure deterministic start state
+				if (inner) gsap.set(inner, { scale: 1 });
+				if (bg) gsap.set(bg, { opacity: baseOpacity });
 
 				const tl = gsap.timeline({
+					defaults: { ease: "none" },
 					scrollTrigger: {
-						trigger: incoming,
-						// Start when the INCOMING card's top reaches the bottom of the PREVIOUS pinned card.
-						// The previous pinned card sits at getPinOffset(i-1), so its bottom line is offset + height.
+						id: `ccSolStackAnim_${n}`,
+						trigger: wrapper, // ✅ stable trigger
+
 						start: () => {
-							const prevTarget = ensureStackTarget(prevCard);
-							const prevH =
-								(prevTarget && prevTarget.getBoundingClientRect().height) ||
-								prevCard?.offsetHeight ||
-								cardHeights[i - 1] ||
-								0;
-							const line = getPinOffset(i - 1) + prevH;
-							return `top top+=${Math.round(line)}`;
+							const h = cardHeights[n] || cardN.offsetHeight || 0;
+							const line = getPinOffset(n) + START_FRACTION_FROM_TOP * h;
+
+							// When nextCard.top (viewport) == line,
+							// scrollY == absTop(nextCard) - line
+							const s = Math.round(absTop(nextCard) - line);
+							return s;
 						},
-						// Finish by the time the incoming card reaches its own pin line.
-						end: () => `top top+=${getPinOffset(i)}`,
+
+						endTrigger: lastCard,
+						end: () => {
+							// When lastCard.top (viewport) == getPinOffset(n),
+							// scrollY == absTop(lastCard) - getPinOffset(n)
+							let e = Math.round(absTop(lastCard) - getPinOffset(n));
+
+							// Safety: never allow end <= start (kills scrub / freezes)
+							const st = tl.scrollTrigger;
+							const s = st ? st.start : e - 1;
+							if (e <= s) e = s + 1;
+
+							return e;
+						},
+
 						scrub: 0.4,
 						invalidateOnRefresh: true,
+						refreshPriority: -1, // ✅ anim triggers refresh after pins
 						markers: DEBUG_SOL_STACK,
 					},
 				});
 
-				affected.forEach((card, idx) => {
-					const layersBehindIncoming = i - idx;
-					const targetScale = Math.max(MIN_SCALE, 1 - layersBehindIncoming * SCALE_STEP);
-					const darken = clamp(layersBehindIncoming * BG_DARKEN_STEP, 0, MAX_BG_DARKEN);
-					const target = ensureStackTarget(card);
-					const bg = ensureBg(card);
-					tl.to(
-						target,
-						{
-							scale: targetScale,
-							duration: 0.4,
-							ease: "power1.out",
-							overwrite: "auto",
-						},
-						0
-					);
-					if (bg && bg.dataset.ccBaseBg) {
-						const base = bg.dataset.ccBaseBg.split(",").map((n) => Number(n) || 0);
-						const r = Math.round((base[0] || 0) * (1 - darken));
-						const g = Math.round((base[1] || 0) * (1 - darken));
-						const b = Math.round((base[2] || 0) * (1 - darken));
-						tl.to(
-							bg,
-							{
-								backgroundColor: `rgb(${r}, ${g}, ${b})`,
-								duration: 0.4,
-								ease: "power1.out",
-								overwrite: "auto",
-							},
-							0
-						);
-					}
-				});
+				if (inner) tl.to(inner, { scale: targetScale }, 0);
+				if (bg) tl.to(bg, { opacity: targetOpacity }, 0);
 
-				tweens.push(tl);
+				timelines.push(tl);
 				triggers.push(tl.scrollTrigger);
+
+				// debug hook if you want it
+				if (window.clearclick) window.clearclick.timelines = timelines;
 			});
 
-			// Service-tag expansion affects heights → refresh after the expand animation
+			// ----------------------------
+			// Refresh handling (service-tag expand / resize)
+			// ----------------------------
+			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
+
 			const onClick = (e) => {
 				if (!e.target.closest(".sol-card_services-more")) return;
 				setTimeout(refresh, 600);
 			};
 			wrapper.addEventListener("click", onClick);
 
-			// Any height change (wrap/expand/fonts) → refresh
 			let ro = null;
 			if (typeof ResizeObserver !== "undefined") {
 				ro = new ResizeObserver(() => refresh());
 				cards.forEach((c) => ro.observe(c));
 			}
 
+			// Extra-safe: refresh after full load too (images/fonts/layout shifts)
+			const onLoad = () => ScrollTrigger.refresh();
+			window.addEventListener("load", onLoad, { once: true });
+
 			requestAnimationFrame(() => ScrollTrigger.refresh());
 
+			// ----------------------------
+			// Cleanup
+			// ----------------------------
 			return () => {
 				wrapper.removeEventListener("click", onClick);
+				window.removeEventListener("load", onLoad);
 				if (ro) ro.disconnect();
+
 				ScrollTrigger.removeEventListener("refreshInit", calculateCardHeights);
 
 				triggers.forEach((st) => st?.kill?.());
-				tweens.forEach((t) => t?.kill?.());
+				timelines.forEach((t) => t?.kill?.());
 
 				cards.forEach((card) => {
 					gsap.set(card, { clearProps: "zIndex" });
-					const target = card._ccSolStack?.target;
-					if (target) gsap.set(target, { clearProps: "transform,transformOrigin" });
-					const bg = card._ccSolStack?.bg;
-					if (bg) {
-						gsap.set(bg, { clearProps: "backgroundColor" });
-						bg.style.backgroundColor = bg.dataset.ccOrigBgStyle || "";
-						delete bg.dataset.ccOrigBgStyle;
-						delete bg.dataset.ccBaseBg;
+
+					const s = card._ccSolStack;
+					if (!s) return;
+
+					if (s.inner) gsap.set(s.inner, { clearProps: "transform,transformOrigin,willChange" });
+
+					if (s.bg) {
+						s.bg.style.opacity = s.origBgOpacity || "";
+						gsap.set(s.bg, { clearProps: "willChange" });
 					}
-					if (card._ccSolStack) delete card._ccSolStack;
+
+					delete card._ccSolStack;
 				});
 			};
 		});
@@ -3737,4 +4235,5 @@ function main() {
 
 	hookFinsweetRenders();
 	initAllTabs();
+	simpleTabs();
 }
