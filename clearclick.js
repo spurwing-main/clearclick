@@ -1,36 +1,4 @@
 function main() {
-	const MotionGlobal = window.Motion;
-
-	if (!MotionGlobal) {
-		console.warn("[clearclick] Motion library not found on window.Motion");
-	}
-
-	const { animate, inView, stagger } = MotionGlobal || {};
-
-	/* DEBUG LOGGING UTILITY */
-	// to enable, set localStorage key "ccDebug[Name]" to "1" with the following command:
-	// localStorage.setItem("ccDebug[Name]", "1");
-	function createDebugLog(prefix, storageKey, defaultPrefix = "clearclick") {
-		let enabled = false;
-		try {
-			enabled = localStorage.getItem(`ccDebug[${prefix}]`) === "1";
-			// console.log("[clearclick] Debug log", prefix, "enabled:", enabled);
-		} catch (e) {
-			enabled = false;
-		}
-
-		const tag = prefix ? `[${prefix}]` : `[${defaultPrefix}]`;
-
-		const log = (...args) => {
-			if (!enabled) return;
-			console.log(tag, ...args);
-		};
-
-		log.enabled = enabled;
-
-		return log;
-	}
-
 	function emblaCanScroll(api, direction) {
 		if (!api) return false;
 		const dir = direction === "prev" ? "prev" : "next";
@@ -73,37 +41,32 @@ function main() {
 		return dir === "prev" ? selected > 0 : selected < count - 1;
 	}
 
-	function homeHeroCorners() {
-		// on scroll, animate bottom corner radius of .c-home-hero from 0 to 3rem
+	function anim_homeHeroCorners() {
 		const hero = document.querySelector(".c-home-hero");
 		if (!hero) return;
 		gsap.to(
 			hero,
-			// {
-			// 	borderBottomLeftRadius: "0rem",
-			// 	borderBottomRightRadius: "0rem",
-			// },
+
 			{
 				borderBottomLeftRadius: "3rem",
 				borderBottomRightRadius: "3rem",
 				scrollTrigger: {
 					trigger: hero,
 					start: "top top",
-					// end should be after scrolling a fixed amount
 					end: () => `+=${window.innerHeight * 0.25}`,
 					scrub: 1,
-					// markers: false,
-					// duration: 0.01,
+
 					ease: "power1.out",
-					// toggleActions: "restart none none reverse",
 				},
-			}
+			},
 		);
 	}
 
-	function hideShowNav() {
+	function nav_hideShow() {
 		const nav = document.querySelector(".nav");
 		if (!nav) return;
+
+		const debugLog = createDebugLog("nav_hideShow", "nav_hideShow");
 
 		const showThreshold = 50; // Always show when within this distance from top
 		const hideThreshold = 150; // Can hide only after passing this
@@ -117,7 +80,7 @@ function main() {
 		let ticking = false;
 
 		// Clean up any existing trigger
-		const oldTrigger = ScrollTrigger.getById("hideShowNav");
+		const oldTrigger = ScrollTrigger.getById("nav_hideShow");
 		if (oldTrigger) oldTrigger.kill();
 
 		// rAF update loop
@@ -154,7 +117,7 @@ function main() {
 
 		// ScrollTrigger watches scroll and schedules an update
 		ScrollTrigger.create({
-			id: "hideShowNav",
+			id: "nav_hideShow",
 			trigger: document.body,
 			start: "top top",
 			end: "bottom bottom",
@@ -168,7 +131,7 @@ function main() {
 		});
 	}
 
-	function logoStaggers() {
+	function anim_logoStaggers() {
 		var delay = 400; // adjust as needed for a faster or slower stagger
 		$(".logo-cycle_track").each(function (index) {
 			const card = $(this);
@@ -178,19 +141,14 @@ function main() {
 		});
 	}
 
-	function animTextFadeIn() {
-		if (
-			typeof gsap === "undefined" ||
-			typeof ScrollTrigger === "undefined" ||
-			typeof SplitText === "undefined"
-		) {
-			console.warn("[clearclick] GSAP/ScrollTrigger/SplitText missing; skipping animTextFadeIn()");
-			return;
-		}
-
+	function anim_textFadeIn() {
 		const startOpacity = 0.3;
 		const els = gsap.utils.toArray(".anim-text-fade");
 		let madeAnyScrollTriggers = false;
+
+		if (!els.length) return;
+
+		const log = createDebugLog("anim_textFadeIn", "anim_textFadeIn");
 
 		els.forEach((el) => {
 			// --- safe re-init (Swup/FS rerenders/etc.) ---
@@ -266,73 +224,7 @@ function main() {
 		if (madeAnyScrollTriggers) ScrollTrigger.refresh();
 	}
 
-	function initMotionCounters() {
-		return;
-		if (!animate || !inView) {
-			console.warn("[clearclick] Motion animate/inView unavailable, skipping counters");
-			return;
-		}
-
-		// Bail if there are no counters at all
-		if (!document.querySelector("[data-count-target]")) return;
-
-		const triggers = document.querySelectorAll("[data-count-trigger='true']");
-		if (!triggers.length) return;
-
-		triggers.forEach((trigger) => {
-			// All counters inside this trigger
-			const elements = trigger.querySelectorAll("[data-count-target]");
-			if (!elements.length) return;
-
-			// per-group stagger value
-			const baseStagger = parseFloat(trigger.getAttribute("data-count-stagger") || "0.15") || 0;
-
-			inView(
-				trigger,
-				() => {
-					elements.forEach((element, index) => {
-						const target = parseFloat(element.getAttribute("data-count-target") || "0");
-						if (Number.isNaN(target)) return;
-
-						const duration = parseFloat(element.getAttribute("data-count-duration") || "1.2");
-						const prefix = element.getAttribute("data-count-prefix") || "";
-						const suffix = element.getAttribute("data-count-suffix") || "";
-						const decimals = parseInt(element.getAttribute("data-count-decimals") || "0", 10);
-
-						// Number formatting
-						const formatter = new Intl.NumberFormat("en-GB", {
-							minimumFractionDigits: decimals,
-							maximumFractionDigits: decimals,
-						});
-
-						// Start from existing text (stripped) or 0
-						const initial = parseFloat((element.textContent || "").replace(/[^\d.-]/g, ""));
-						const from = Number.isFinite(initial) ? initial : 0;
-
-						// Ensure initial text
-						element.textContent = `${prefix}${formatter.format(from)}${suffix}`;
-
-						// Animate with per-element delay
-						animate(from, target, {
-							duration,
-							ease: "circOut",
-							delay: index * baseStagger, // staggered start
-							onUpdate(latest) {
-								const value = decimals > 0 ? latest : Math.round(latest);
-								element.textContent = `${prefix}${formatter.format(value)}${suffix}`;
-							},
-						});
-					});
-				},
-				{
-					margin: "0px 0px -10% 0px", // trigger a bit earlier
-					once: true, // only fire once per trigger
-				}
-			);
-		});
-	}
-
-	function latestCarousel() {
+	function c_latestCarousel() {
 		const mq = window.matchMedia("(max-width: 991px)");
 
 		const OPTIONS = {
@@ -343,6 +235,8 @@ function main() {
 
 		const components = document.querySelectorAll(".c-latest");
 		if (!components.length) return;
+
+		const log = createDebugLog("c_latestCarousel", "c_latestCarousel");
 
 		components.forEach((component) => {
 			const emblaNode = component.querySelector(".latest_list-wrap.embla");
@@ -359,7 +253,8 @@ function main() {
 				dotsNode.innerHTML = emblaApi
 					.scrollSnapList()
 					.map(
-						(_, index) => `<button class="latest_dot" type="button" data-index="${index}"></button>`
+						(_, index) =>
+							`<button class="latest_dot" type="button" data-index="${index}"></button>`,
 					)
 					.join("");
 
@@ -421,12 +316,8 @@ function main() {
 		});
 	}
 
-	function approachSliderCarousel() {
-		// Requires EmblaCarousel on window
-		if (typeof EmblaCarousel === "undefined") {
-			console.warn("[clearclick] EmblaCarousel not found, skipping approachSliderCarousel()");
-			return;
-		}
+	function c_approachCarousel() {
+		const log = createDebugLog("c_approachCarousel", "c_approachCarousel");
 
 		// DrawSVG support (optional but requested)
 		const hasDrawSVG =
@@ -438,11 +329,6 @@ function main() {
 			gsap.registerPlugin(DrawSVGPlugin);
 		}
 
-		if (!hasDrawSVG) {
-			console.warn(
-				"[clearclick] DrawSVGPlugin not found; .approach-card_line animations will be skipped."
-			);
-		}
 		const components = Array.from(document.querySelectorAll(".c-approach-slider"));
 		if (!components.length) return;
 
@@ -520,7 +406,7 @@ function main() {
 							duration,
 							ease,
 							overwrite: "auto",
-						}
+						},
 					);
 				} else {
 					gsap.to(lineEl, {
@@ -622,7 +508,7 @@ function main() {
 		});
 	}
 
-	function caseStudiesCarousel() {
+	function c_caseStudiesCarousel() {
 		function debounce(fn, wait = 120) {
 			let t;
 			return (...args) => {
@@ -634,6 +520,8 @@ function main() {
 		const thumbRoot = document.querySelector(".csc_logo-slider.embla");
 
 		if (!mainRoot || !thumbRoot) return;
+
+		const log = createDebugLog("c_caseStudiesCarousel", "c_caseStudiesCarousel");
 
 		const mainViewport = mainRoot;
 		const thumbViewport = thumbRoot;
@@ -678,7 +566,7 @@ function main() {
 		const ClassNamesPlugin = getEmblaClassNamesPlugin();
 		if (!ClassNamesPlugin) {
 			console.warn(
-				"[clearclick] Embla class-names plugin not found for caseStudiesCarousel(). Check window.EmblaCarouselClassNames"
+				"[clearclick] Embla class-names plugin not found for c_caseStudiesCarousel(). Check window.EmblaCarouselClassNames",
 			);
 		}
 
@@ -686,7 +574,7 @@ function main() {
 		const emblaMain = EmblaCarousel(
 			mainViewport,
 			MAIN_OPTIONS,
-			ClassNamesPlugin ? [ClassNamesPlugin()] : []
+			ClassNamesPlugin ? [ClassNamesPlugin()] : [],
 		);
 
 		const mainSlides = emblaMain.slideNodes();
@@ -775,7 +663,7 @@ function main() {
 
 			emblaThumb = EmblaCarousel(
 				thumbViewport,
-				desiredLoop ? THUMB_OPTIONS_OVERFLOW : THUMB_OPTIONS_NO_OVERFLOW
+				desiredLoop ? THUMB_OPTIONS_OVERFLOW : THUMB_OPTIONS_NO_OVERFLOW,
 			);
 			thumbLoopEnabled = desiredLoop;
 		}
@@ -916,13 +804,8 @@ function main() {
 		updateMainSlideStates();
 	}
 
-	function caseStudiesSimpleCarousel() {
-		const log = (...args) => console.log("[clearclick][cscSimple]", ...args);
-		const warn = (...args) => console.warn("[clearclick][cscSimple]", ...args);
-
-		if (typeof gsap === "undefined") {
-			return;
-		}
+	function c_caseStudiesSimpleCarousel() {
+		const log = createDebugLog("c_caseStudiesSimpleCarousel", "c_caseStudiesSimpleCarousel");
 
 		const prefersReduced =
 			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1128,7 +1011,7 @@ function main() {
 							stagger: 0.03,
 							overwrite: "auto",
 						},
-						0
+						0,
 					);
 				}
 
@@ -1141,7 +1024,7 @@ function main() {
 							duration: 0.55,
 							overwrite: "auto",
 						},
-						0
+						0,
 					);
 				}
 				if (toMedia) {
@@ -1152,7 +1035,7 @@ function main() {
 							duration: 0.55,
 							overwrite: "auto",
 						},
-						0.06
+						0.06,
 					);
 				}
 
@@ -1166,7 +1049,7 @@ function main() {
 							stagger: 0.06,
 							overwrite: "auto",
 						},
-						0.18
+						0.18,
 					);
 				}
 
@@ -1196,19 +1079,14 @@ function main() {
 					if (e.key === "ArrowLeft") prev();
 					if (e.key === "ArrowRight") next();
 				},
-				{ signal: abort.signal }
+				{ signal: abort.signal },
 			);
 
 			log("Initialized component", idx, "slides:", slides.length, "start index:", state.index);
 		});
 	}
 
-	function introStatsCarousel() {
-		if (typeof EmblaCarousel === "undefined") {
-			console.warn("[clearclick] EmblaCarousel not found, skipping introStatsCarousel()");
-			return;
-		}
-
+	function c_introStats() {
 		// set up embla carousel based on .intro-with-stats_stats.embla, .intro-with-stats_stats-list.embla__container, .c-stat.embla__slide. No loop, no arrows, free drag
 		const components = Array.from(document.querySelectorAll(".c-intro-with-stats"));
 		if (!components.length) return;
@@ -1237,12 +1115,7 @@ function main() {
 		});
 	}
 
-	function solsCarousel() {
-		if (typeof EmblaCarousel === "undefined") {
-			console.warn("[clearclick] EmblaCarousel not found, skipping solsCarousel()");
-			return;
-		}
-
+	function c_solsCarousel() {
 		const components = Array.from(document.querySelectorAll(".c-sols-carousel"));
 		if (!components.length) return;
 
@@ -1296,7 +1169,7 @@ function main() {
 					() => {
 						embla.scrollPrev();
 					},
-					{ signal: abort.signal }
+					{ signal: abort.signal },
 				);
 			}
 			if (nextBtn) {
@@ -1305,7 +1178,7 @@ function main() {
 					() => {
 						embla.scrollNext();
 					},
-					{ signal: abort.signal }
+					{ signal: abort.signal },
 				);
 			}
 
@@ -1325,12 +1198,12 @@ function main() {
 						} catch (err) {}
 					}, 650);
 				},
-				{ signal: abort.signal }
+				{ signal: abort.signal },
 			);
 		});
 	}
 
-	function orbit() {
+	function c_orbit() {
 		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
 
 		const component = document.querySelector(".c-process");
@@ -1342,9 +1215,6 @@ function main() {
 		// Spacer element you added (e.g. height: 400svh)
 		const spacerEl = component.querySelector(".process_h");
 		if (!spacerEl) {
-			console.warn(
-				"[clearclick][orbit] .process_h not found; sticky orbit needs a spacer element."
-			);
 			return;
 		}
 
@@ -1406,7 +1276,7 @@ function main() {
 						duration: 1.5,
 						ease: "power2.out",
 					},
-					">"
+					">",
 				);
 
 				if (ring) {
@@ -1417,7 +1287,7 @@ function main() {
 							duration: 1.5,
 							ease: "none",
 						},
-						"<"
+						"<",
 					);
 				}
 			});
@@ -1499,7 +1369,7 @@ function main() {
 						duration: 1,
 						ease: "none",
 					},
-					"0"
+					"0",
 				);
 			}
 
@@ -1510,344 +1380,468 @@ function main() {
 		});
 	}
 
-	// --------- tiny helpers ----------
-	function debounce(fn, wait = 100) {
-		let t;
-		return (...args) => {
-			clearTimeout(t);
-			t = setTimeout(() => fn(...args), wait);
-		};
-	}
-
-	function getPanes(tabsEl) {
-		return Array.from(tabsEl.querySelectorAll(".w-tab-pane, .tabs_tab-pane"));
-	}
-
-	// --------- your existing animation builder ----------
-	function buildPaneTimeline(pane) {
-		const header = pane.querySelector(".tab-pane_header");
-		const subtitle = pane.querySelector(".tab-pane_subtitle");
-		const body = pane.querySelector(".tab-pane_body");
-		const footer = pane.querySelector(".tab-pane_footer");
-		const services = pane.querySelector(".tab-pane_services");
-		// if (!header || !subtitle || !body || !footer || !services) return null;
-
-		const svg = pane.querySelector("svg.svg-rings");
-		if (!svg) return null;
-
-		const ringA = svg.querySelector(".ring-a");
-		const ringB = svg.querySelector(".ring-b");
-		const ringC = svg.querySelector(".ring-c");
-		if (!ringA || !ringB || !ringC) return null;
-
-		// Reset state each time so replay is consistent
-		setRingsInitial(svg);
-
-		const contentEls = [header, subtitle, body, footer, services].filter(Boolean);
-		gsap.set(contentEls, { autoAlpha: 0, y: 20 });
-
-		const isMobile = window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
-
-		const OVERLAP = "-=0.6";
-
-		const tl = gsap.timeline({
-			onComplete: () => {
-				console.log("Pane animation complete");
-			},
-		});
-		if (header) tl.to(header, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" });
-		if (subtitle)
-			tl.to(subtitle, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-		if (body) tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-
-		// Mobile uses the same overlap feel, but swaps the order:
-		// services -> footer (instead of footer -> services)
-		if (isMobile) {
-			if (services)
-				tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-			if (footer) tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-		} else {
-			if (footer) tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-			if (services)
-				tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
-		}
-
-		// Consistent rings animation everywhere
-		addRingsToTimeline(tl, svg, "<");
-
-		return tl;
-	}
-
-	function playPane(pane) {
-		pane._tl?.kill();
-		pane._tl = buildPaneTimeline(pane);
-		pane._tl?.play(0);
-	}
-
-	function getTabLinks(tabsEl) {
-		return Array.from(tabsEl.querySelectorAll(".w-tab-menu .w-tab-link"));
-	}
-
-	function findPaneByTabName(tabsEl, tabName) {
-		if (!tabName) return null;
-		// Webflow panes carry data-w-tab too
-		return tabsEl.querySelector(`.w-tab-content .w-tab-pane[data-w-tab="${CSS.escape(tabName)}"]`);
-	}
-
-	function initTabsHeightTween() {
-		if (typeof gsap === "undefined") return;
-
-		// Skip mobile accordion mode (you already have separate logic there)
-		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
-
-		const prefersReduced = () =>
+	function c_solutionTabs() {
+		const prefersReduced =
 			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-		document.querySelectorAll(".c-tabs .tabs_tabs.w-tabs").forEach((tabsEl) => {
-			if (tabsEl._ccHeightTweenBound) return;
-			tabsEl._ccHeightTweenBound = true;
+		const log = createDebugLog("solutionTabs");
 
-			const contentEl = tabsEl.querySelector(".w-tab-content, .tabs_tabs-content");
-			if (!contentEl) return;
+		function getPanels(rootEl) {
+			if (!rootEl) return [];
+			return Array.from(
+				rootEl.querySelectorAll(
+					".c-tab-panel[data-tab-name], .c-tab-panel, .w-tab-panel, .tabs_tab-panel",
+				),
+			);
+		}
 
-			const killTween = () => {
-				if (tabsEl._ccTabHeightTween) {
+		function buildPanelTimeline(panel, fromH, toH) {
+			const header = panel.querySelector(".tab-panel_header");
+			const subtitle = panel.querySelector(".tab-panel_subtitle");
+			const body = panel.querySelector(".tab-panel_body");
+			const footer = panel.querySelector(".tab-panel_footer");
+			const services = panel.querySelector(".tab-panel_services");
+
+			const svg = panel.querySelector("svg.svg-rings");
+			if (!svg) return null;
+
+			const ringA = svg.querySelector(".ring-a");
+			const ringB = svg.querySelector(".ring-b");
+			const ringC = svg.querySelector(".ring-c");
+			if (!ringA || !ringB || !ringC) return null;
+
+			// Reset state each time so replay is consistent
+			rings_setRingsInitial(svg);
+
+			const contentEls = [header, subtitle, body, footer, services].filter(Boolean);
+			gsap.set(contentEls, { autoAlpha: 0, y: 20 });
+
+			const isMobile = window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+
+			const OVERLAP = "-=0.6";
+
+			const tl = gsap.timeline();
+			if (header) tl.to(header, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" });
+			if (subtitle)
+				tl.to(subtitle, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+			if (body) tl.to(body, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+
+			// Mobile uses the same overlap feel, but swaps the order:
+			// services -> footer (instead of footer -> services)
+			if (isMobile) {
+				if (services)
+					tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+				if (footer)
+					tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+			} else {
+				if (footer)
+					tl.to(footer, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+				if (services)
+					tl.to(services, { autoAlpha: 1, y: 0, duration: 0.8, ease: "power2.out" }, OVERLAP);
+			}
+
+			// Consistent rings animation everywhere
+			rings_addRingsToTimeline(tl, svg, "<");
+
+			return tl;
+		}
+
+		function playPanel(panel) {
+			if (typeof gsap === "undefined") return;
+			panel._tl?.kill();
+			panel._tl = buildPanelTimeline(panel);
+			panel._tl?.play(0);
+		}
+
+		function isMobile() {
+			return window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
+		}
+
+		// --------- mobile accordion ----------
+		const mq = window.matchMedia("(max-width: 767px)");
+		let mqBound = false;
+
+		function initAccordion(component) {
+			if (typeof gsap === "undefined") return;
+			if (!component._headerClickHandlers) component._headerClickHandlers = new Map();
+
+			const panels = getPanels(component);
+			panels.forEach((panel) => {
+				const header = panel.querySelector(".tab-panel_mbl-header");
+				const inner = panel.querySelector(".tab-panel_inner");
+				const icon = panel.querySelector(".tab-panel_accordion-icon");
+				if (!header || !inner || !icon) return;
+
+				if (header.dataset.accordionBound === "true") return;
+
+				// Start collapsed
+				gsap.set(inner, { height: 0, overflow: "hidden" });
+				gsap.set(icon, { rotation: 0 });
+
+				const tl = gsap.timeline({ paused: true });
+				tl.to(inner, { height: "auto", duration: 0.5, ease: "power2.inOut" });
+				tl.to(icon, { rotation: 180, duration: 0.5, ease: "power2.inOut" }, "<");
+				panel._accordionTl = tl;
+
+				const onHeaderClick = () => {
+					const isOpen = panel.classList.contains("is-open");
+
+					// close others
+					panels.forEach((other) => {
+						if (other === panel) return;
+						other.classList.remove("is-open");
+						other._accordionTl?.reverse();
+					});
+
+					if (isOpen) {
+						panel.classList.remove("is-open");
+						tl.reverse();
+					} else {
+						panel.classList.add("is-open");
+						tl.play(0);
+						// ALSO trigger your panel animation on open
+						playPanel(panel);
+					}
+				};
+
+				component._headerClickHandlers.set(header, onHeaderClick);
+				header.dataset.accordionBound = "true";
+				header.addEventListener("click", onHeaderClick);
+			});
+		}
+
+		function destroyAccordion(component) {
+			const panels = getPanels(component);
+
+			panels.forEach((panel) => {
+				const header = panel.querySelector(".tab-panel_mbl-header");
+				const inner = panel.querySelector(".tab-panel_inner");
+				const icon = panel.querySelector(".tab-panel_accordion-icon");
+
+				if (header && header.dataset.accordionBound === "true") {
+					const handler = component._headerClickHandlers?.get(header);
+					if (handler) header.removeEventListener("click", handler);
+					component._headerClickHandlers?.delete(header);
+					header.removeAttribute("data-accordion-bound");
+				}
+
+				panel.classList.remove("is-open");
+
+				if (panel._accordionTl) {
+					panel._accordionTl.kill();
+					delete panel._accordionTl;
+				}
+
+				if (inner) {
+					gsap.killTweensOf(inner);
+					gsap.set(inner, { clearProps: "height,overflow" });
+				}
+
+				if (icon) {
+					gsap.killTweensOf(icon);
+					gsap.set(icon, { clearProps: "transform" });
+				}
+			});
+		}
+
+		function initComponent(component, componentIndex) {
+			// Safe re-init
+			if (component._ccSolutionTabs?.cleanup) {
+				try {
+					component._ccSolutionTabs.cleanup();
+				} catch (e) {}
+			}
+
+			const tabsRoot = component.querySelector(".tabs_tabs");
+			const menuEl = component.querySelector(".tabs_tabs-menu");
+			const contentEl = component.querySelector(".tabs_tabs-content");
+			const panels = getPanels(component).filter((p) => p.matches(".c-tab-panel"));
+
+			if (!tabsRoot || !menuEl || !contentEl || !panels.length) {
+				log("skip: missing required elements", {
+					componentIndex,
+					tabsRoot: !!tabsRoot,
+					menuEl: !!menuEl,
+					contentEl: !!contentEl,
+					panels: panels.length,
+				});
+				return;
+			}
+
+			// Build tab buttons from panel data-tab-name
+			menuEl.innerHTML = "";
+			menuEl.setAttribute("role", "tablist");
+
+			const tabButtons = panels.map((panel, index) => {
+				const rawName = panel.getAttribute("data-tab-name") || "";
+				const label = rawName.trim() || `Tab ${index + 1}`;
+
+				const btn = document.createElement("button");
+				btn.type = "button";
+				btn.className = "c-tab-link";
+				btn.textContent = label;
+				btn.dataset.index = String(index);
+				btn.dataset.tabName = label;
+				btn.setAttribute("role", "tab");
+				btn.setAttribute("aria-selected", index === 0 ? "true" : "false");
+
+				if (!panel.id) panel.id = `solution-tabs_panel_${Math.random().toString(36).slice(2)}`;
+				btn.setAttribute("aria-controls", panel.id);
+				btn.id = `${panel.id}__tab`;
+				panel.setAttribute("role", "tabpanel");
+				panel.setAttribute("aria-labelledby", btn.id);
+
+				menuEl.appendChild(btn);
+				return btn;
+			});
+
+			let activeIndex = 0;
+			let heightTween = null;
+			let rafHeight = 0;
+			let mqBound = false;
+			const mq = window.matchMedia("(max-width: 767px)");
+
+			const setActiveTabButton = (index) => {
+				tabButtons.forEach((btn, i) => {
+					const isActive = i === index;
+					btn.classList.toggle("is-active", isActive);
+					btn.setAttribute("aria-selected", isActive ? "true" : "false");
+				});
+			};
+
+			const applyDesktopVisibility = (index) => {
+				panels.forEach((panel, i) => {
+					const isActive = i === index;
+					panel.classList.toggle("is-active", isActive);
+					gsap.set(panel, { display: isActive ? "block" : "none" });
+				});
+			};
+
+			const killHeightTween = () => {
+				if (rafHeight) {
+					cancelAnimationFrame(rafHeight);
+					rafHeight = 0;
+				}
+				if (heightTween) {
 					try {
-						tabsEl._ccTabHeightTween.kill();
+						heightTween.kill();
 					} catch (e) {}
-					tabsEl._ccTabHeightTween = null;
+					heightTween = null;
 				}
 			};
 
-			const tweenToActiveHeight = (duration = 0.35) => {
-				if (isMobile() || prefersReduced()) return;
+			const animateSectionHeight = ({
+				el = contentEl,
+				fromHeight,
+				toHeight,
+				duration = 0.35,
+			} = {}) => {
+				if (prefersReduced) {
+					gsap.set(el, { clearProps: "height,overflow" });
+					return;
+				}
 
-				killTween();
+				killHeightTween();
+				const from = Number.isFinite(fromHeight) ? fromHeight : el.getBoundingClientRect().height;
 
-				const from = contentEl.getBoundingClientRect().height;
+				gsap.set(el, { height: from, overflow: "hidden" });
 
-				// Lock current height BEFORE Webflow toggles panes (prevents snap)
-				gsap.set(contentEl, { height: from, overflow: "hidden" });
+				rafHeight = requestAnimationFrame(() => {
+					rafHeight = 0;
+					if (!Number.isFinite(toHeight) || Math.abs(toHeight - from) < 1) {
+						gsap.set(el, { clearProps: "height,overflow" });
+						return;
+					}
 
-				// Wait for Webflow to apply w--tab-active + display changes
-				requestAnimationFrame(() => {
-					requestAnimationFrame(() => {
-						const activePane =
-							contentEl.querySelector(".w-tab-pane.w--tab-active") ||
-							contentEl.querySelector(".tabs_tab-pane.w--tab-active");
-
-						// Fallback if for some reason active pane isn't found yet
-						const to = activePane
-							? activePane.getBoundingClientRect().height
-							: contentEl.scrollHeight;
-
-						if (!Number.isFinite(to) || Math.abs(to - from) < 1) {
-							gsap.set(contentEl, { clearProps: "height,overflow" });
-							return;
-						}
-
-						tabsEl._ccTabHeightTween = gsap.to(contentEl, {
-							height: to,
-							duration,
-							ease: "power2.out",
-							overwrite: "auto",
-							onComplete: () => {
-								gsap.set(contentEl, { clearProps: "height,overflow" });
-								tabsEl._ccTabHeightTween = null;
-							},
-						});
+					heightTween = gsap.to(el, {
+						height: toHeight,
+						duration,
+						ease: "power2.out",
+						overwrite: "auto",
+						onComplete: () => {
+							gsap.set(el, { clearProps: "height,overflow" });
+							heightTween = null;
+						},
 					});
 				});
 			};
 
-			// Capture phase = we run BEFORE Webflow’s own tab handler
-			tabsEl.addEventListener(
-				"click",
-				(e) => {
-					const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
-					if (!link || !tabsEl.contains(link)) return;
-					tweenToActiveHeight(0.35);
-				},
-				{ capture: true }
-			);
+			const openAccordionIndex = (index) => {
+				if (typeof gsap === "undefined") return;
+				const target = panels[index];
+				if (!target) return;
 
-			tabsEl.addEventListener(
-				"keydown",
-				(e) => {
-					if (e.key !== "Enter" && e.key !== " ") return;
-					const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
-					if (!link || !tabsEl.contains(link)) return;
-					tweenToActiveHeight(0.35);
-				},
-				{ capture: true }
-			);
-
-			// Optional: set a sane initial state (no animation, just clears any weird inline height)
-			requestAnimationFrame(() => gsap.set(contentEl, { clearProps: "height,overflow" }));
-		});
-	}
-
-	function playByLink(tabsEl, linkEl) {
-		if (!linkEl) return;
-
-		const tabName = linkEl.getAttribute("data-w-tab");
-
-		// Run pane animation after Webflow has toggled the active pane (avoids animating hidden panes).
-		requestAnimationFrame(() => {
-			requestAnimationFrame(() => {
-				const pane = findPaneByTabName(tabsEl, tabName);
-				if (pane) playPane(pane);
-			});
-		});
-	}
-
-	function initTabsForComponent(tabsEl) {
-		if (!tabsEl || tabsEl._ccTabsBound) return;
-		tabsEl._ccTabsBound = true;
-
-		// play once on init: use current tab link (reliable)
-		const currentLink = tabsEl.querySelector(".w-tab-menu .w-tab-link.w--current");
-		if (currentLink) playByLink(tabsEl, currentLink);
-
-		// click-based activation: keep in capture so we fire even if Webflow changes propagation.
-		tabsEl.addEventListener(
-			"click",
-			(e) => {
-				const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
-				if (!link || !tabsEl.contains(link)) return;
-				playByLink(tabsEl, link);
-			},
-			{ capture: true }
-		);
-
-		// keyboard activation (Enter/Space) on focused link
-		// capture helps us run even if Webflow changes propagation.
-		tabsEl.addEventListener(
-			"keydown",
-			(e) => {
-				if (e.key !== "Enter" && e.key !== " ") return;
-				const link = e.target.closest(".w-tab-menu .w-tab-link, .tabs_tabs-menu .w-tab-link");
-				if (!link || !tabsEl.contains(link)) return;
-				playByLink(tabsEl, link);
-			},
-			{ capture: true }
-		);
-	}
-
-	// --------- mobile accordion ----------
-	const mq = window.matchMedia("(max-width: 767px)");
-	let mqBound = false;
-
-	function initAccordion(component) {
-		if (!component._headerClickHandlers) component._headerClickHandlers = new Map();
-
-		const panes = getPanes(component);
-		panes.forEach((pane) => {
-			const header = pane.querySelector(".tab-pane_mbl-header");
-			const inner = pane.querySelector(".tab-pane_inner");
-			const icon = pane.querySelector(".tab-pane_accordion-icon");
-			if (!header || !inner || !icon) return;
-
-			if (header.dataset.accordionBound === "true") return;
-
-			// Start collapsed
-			gsap.set(inner, { height: 0, overflow: "hidden" });
-			gsap.set(icon, { rotation: 0 });
-
-			const tl = gsap.timeline({ paused: true });
-			tl.to(inner, { height: "auto", duration: 0.5, ease: "power2.inOut" });
-			tl.to(icon, { rotation: 180, duration: 0.5, ease: "power2.inOut" }, "<");
-			pane._accordionTl = tl;
-
-			const onHeaderClick = () => {
-				const isOpen = pane.classList.contains("is-open");
-
-				// close others
-				panes.forEach((other) => {
-					if (other === pane) return;
-					other.classList.remove("is-open");
-					other._accordionTl?.reverse();
+				panels.forEach((panel, i) => {
+					if (panel === target) return;
+					panel.classList.remove("is-open");
+					panel._accordionTl?.reverse();
 				});
 
-				if (isOpen) {
-					pane.classList.remove("is-open");
-					tl.reverse();
-				} else {
-					pane.classList.add("is-open");
-					tl.play(0);
-					// ALSO trigger your pane animation on open
-					playPane(pane);
+				target.classList.add("is-open");
+				target._accordionTl?.play(0);
+				playPanel(target);
+			};
+
+			const showPanel = (index, { animate = true } = {}) => {
+				if (!Number.isFinite(index)) return;
+				if (index < 0 || index >= panels.length) return;
+				if (index === activeIndex) return;
+
+				const fromIndex = activeIndex;
+				const toIndex = index;
+
+				const fromPanel = panels[fromIndex];
+				const toPanel = panels[toIndex];
+				if (!fromPanel || !toPanel) return;
+
+				const measureHeight = (el) => {
+					const height = Math.ceil(el.getBoundingClientRect().height);
+					return height;
+				};
+
+				// Stop any in-flight panel animation on the outgoing panel
+				fromPanel?._tl?.kill?.();
+
+				// get height of toPanel. We do this by making it absolutely positioned temporarily.
+				gsap.set(toPanel, {
+					position: "absolute",
+					left: 0,
+					top: 0,
+					right: 0,
+					visibility: "hidden",
+					display: "block",
+				});
+				const toPanelH = measureHeight(toPanel);
+				gsap.set(toPanel, { clearProps: "position,visibility,display,left,right,top" });
+
+				// and measure height of fromPanel
+				const fromPanelH = measureHeight(fromPanel);
+
+				// log the heights
+				log("panel heights", {
+					fromIndex,
+					toIndex,
+					fromPanelH,
+					toPanelH,
+				});
+
+				activeIndex = toIndex;
+				setActiveTabButton(activeIndex);
+
+				if (mq.matches) {
+					// Mobile behavior: accordion
+					openAccordionIndex(activeIndex);
+					return;
+				}
+
+				// Desktop behavior: show one panel + animate section height
+				// Lock the container height BEFORE switching visibility to prevent jumps
+				if (animate && typeof gsap !== "undefined") {
+					gsap.set(contentEl, { height: fromPanelH, overflow: "hidden" });
+				}
+
+				// if incoming panel is taller, animate the height first
+				if (toPanelH > fromPanelH && animate) {
+					animateSectionHeight({
+						el: contentEl,
+						fromHeight: fromPanelH,
+						toHeight: toPanelH,
+						duration: 0.35,
+					});
+				}
+
+				applyDesktopVisibility(activeIndex);
+
+				// Play incoming panel animation
+				playPanel(toPanel);
+
+				// if incoming panel is shorter, animate the height after switching panels
+				if (toPanelH <= fromPanelH && animate) {
+					applyDesktopVisibility(activeIndex);
+					playPanel(toPanel);
+
+					animateSectionHeight({
+						el: contentEl,
+						fromHeight: fromPanelH,
+						toHeight: toPanelH,
+						duration: 0.35,
+					});
 				}
 			};
 
-			component._headerClickHandlers.set(header, onHeaderClick);
-			header.dataset.accordionBound = "true";
-			header.addEventListener("click", onHeaderClick);
-		});
-	}
+			const onMenuClick = (e) => {
+				const btn = e.target.closest("button.c-tab-link");
+				if (!btn || !menuEl.contains(btn)) return;
+				const idx = parseInt(btn.dataset.index || "0", 10);
+				if (!Number.isFinite(idx)) return;
+				showPanel(idx, { animate: true });
+			};
 
-	function destroyAccordion(component) {
-		const panes = getPanes(component);
+			const onMenuKeyDown = (e) => {
+				if (e.key !== "Enter" && e.key !== " ") return;
+				const btn = e.target.closest("button.c-tab-link");
+				if (!btn || !menuEl.contains(btn)) return;
+				e.preventDefault();
+				const idx = parseInt(btn.dataset.index || "0", 10);
+				if (!Number.isFinite(idx)) return;
+				showPanel(idx, { animate: true });
+			};
 
-		panes.forEach((pane) => {
-			const header = pane.querySelector(".tab-pane_mbl-header");
-			const inner = pane.querySelector(".tab-pane_inner");
-			const icon = pane.querySelector(".tab-pane_accordion-icon");
+			const applyMode = () => {
+				killHeightTween();
+				if (typeof gsap !== "undefined") gsap.set(component, { clearProps: "height,overflow" });
 
-			if (header && header.dataset.accordionBound === "true") {
-				const handler = component._headerClickHandlers?.get(header);
-				if (handler) header.removeEventListener("click", handler);
-				component._headerClickHandlers?.delete(header);
-				header.removeAttribute("data-accordion-bound");
+				if (mq.matches) {
+					// Mobile: show all panels and let accordion manage inner visibility
+					panels.forEach((panel) => {
+						if (typeof gsap !== "undefined") gsap.set(panel, { display: "block" });
+						else panel.style.display = "block";
+					});
+					initAccordion(tabsRoot);
+				} else {
+					destroyAccordion(tabsRoot);
+					applyDesktopVisibility(activeIndex);
+					// Play active panel on mode switch (safe)
+					playPanel(panels[activeIndex]);
+				}
+			};
+
+			// Initial state
+			setActiveTabButton(0);
+			applyMode();
+
+			menuEl.addEventListener("click", onMenuClick);
+			menuEl.addEventListener("keydown", onMenuKeyDown);
+
+			if (!mqBound) {
+				mqBound = true;
+				mq.addEventListener("change", applyMode);
 			}
 
-			pane.classList.remove("is-open");
+			component._ccSolutionTabs = {
+				cleanup: () => {
+					menuEl.removeEventListener("click", onMenuClick);
+					menuEl.removeEventListener("keydown", onMenuKeyDown);
+					try {
+						mq.removeEventListener("change", applyMode);
+					} catch (e) {}
+					killHeightTween();
+					destroyAccordion(tabsRoot);
+					panels.forEach((p) => {
+						p._tl?.kill?.();
+						p._accordionTl?.kill?.();
+					});
+				},
+			};
+		}
 
-			if (pane._accordionTl) {
-				pane._accordionTl.kill();
-				delete pane._accordionTl;
-			}
-
-			if (inner) {
-				gsap.killTweensOf(inner);
-				gsap.set(inner, { clearProps: "height,overflow" });
-			}
-
-			if (icon) {
-				gsap.killTweensOf(icon);
-				gsap.set(icon, { clearProps: "transform" });
-			}
-		});
-	}
-
-	function applyAccordionState() {
-		const components = document.querySelectorAll(".c-tabs .tabs_tabs");
+		const components = Array.from(document.querySelectorAll(".c-tabs"));
 		if (!components.length) return;
 
-		if (mq.matches) {
-			components.forEach(initAccordion);
-		} else {
-			components.forEach(destroyAccordion);
-		}
-
-		if (!mqBound) {
-			mqBound = true;
-			mq.addEventListener("change", applyAccordionState);
-		}
+		components.forEach((component, index) => initComponent(component, index));
 	}
 
-	// --------- master init ----------
-	function initAllTabs() {
-		document.querySelectorAll(".c-tabs .tabs_tabs").forEach((tabsEl) => {
-			initTabsForComponent(tabsEl);
-		});
-
-		initTabsHeightTween();
-
-		applyAccordionState();
-	}
-
-	function simpleTabs() {
+	function c_simpleTabs() {
 		const prefersReduced =
 			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1875,7 +1869,7 @@ function main() {
 			const panels = gsap.utils.toArray(".simple-tabs_panel", component);
 			const tabList = component.querySelector(".simple-tabs_controls .simple-tabs_tab-list");
 			const tabListWrap = component.querySelector(
-				".simple-tabs_controls .simple-tabs_tab-list-wrap"
+				".simple-tabs_controls .simple-tabs_tab-list-wrap",
 			);
 			const allMedia = gsap.utils.toArray(".simple-tabs_media", component);
 			const allContent = gsap.utils.toArray(".simple-tabs_content", component);
@@ -1932,7 +1926,7 @@ function main() {
 			});
 			log(
 				"built tabs",
-				tabButtons.map((b) => b.textContent)
+				tabButtons.map((b) => b.textContent),
 			);
 
 			let activeIndex = 0;
@@ -2265,123 +2259,7 @@ function main() {
 		});
 	}
 
-	// --------- Finsweet hook: rerun init on FS render  ----------
-	function hookFinsweetRenders() {
-		window.FinsweetAttributes ||= [];
-		window.FinsweetAttributes.push([
-			"list",
-			(listInstances) => {
-				listInstances.forEach((inst) => {
-					if (inst.__ccTabsHooked) return;
-					inst.__ccTabsHooked = true;
-
-					// v2-style hook (commonly used by FS list solutions)
-					if (typeof inst.addHook === "function") {
-						inst.addHook(
-							"afterRender",
-							debounce(() => {
-								initAllTabs();
-								simpleTabs();
-								initScrollReveals();
-								caseStudiesSimpleCarousel();
-								solsCarousel();
-								expandSolutionServiceTags();
-							}, 0)
-						);
-					}
-
-					// if the instance exposes an event emitter style API, support that too
-					if (typeof inst.on === "function") {
-						inst.on(
-							"renderitems",
-							debounce(() => {
-								initAllTabs();
-								simpleTabs();
-								initScrollReveals();
-								caseStudiesSimpleCarousel();
-								solsCarousel();
-								expandSolutionServiceTags();
-							}, 0)
-						);
-					}
-				});
-
-				// run once when FS list is ready
-				initAllTabs();
-				simpleTabs();
-				initScrollReveals();
-				caseStudiesSimpleCarousel();
-				solsCarousel();
-				expandSolutionServiceTags();
-			},
-		]);
-	}
-
-	// Apply the buildPaneTimeline “feel” to arbitrary sections on scroll.
-	// Usage:
-	// <section class="cc-reveal"> ... <h2 class="cc-reveal-item">...</h2> ... </section>
-	function ccFireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
-		if (!eventName) return;
-		const startedAt = performance.now();
-
-		const fire = () => {
-			try {
-				window.dispatchEvent(new CustomEvent(eventName, { detail }));
-			} catch (e) {}
-		};
-
-		// immediate + next frame
-		fire();
-		requestAnimationFrame(fire);
-
-		// keep trying for a bit (covers slow mount)
-		const timer = setInterval(() => {
-			fire();
-			if (performance.now() - startedAt >= maxMs) clearInterval(timer);
-		}, intervalMs);
-	}
-
-	function ccDispatchCountUpForItem(
-		item,
-		trigger,
-		{ durationSec, defaultDelaySec, maxMs = 2500, intervalMs = 120 } = {}
-	) {
-		if (!item) return;
-
-		const log = createDebugLog("countup", "ccDebugCountup");
-
-		// Support either:
-		// - the item itself having data-motion-countup-event
-		// - a child element having data-motion-countup-event
-		const el = item.querySelector("[data-motion-countup-event]");
-		const eventEl = item.hasAttribute?.("data-motion-countup-event") ? item : el;
-		const eventName = eventEl?.getAttribute?.("data-motion-countup-event")?.trim();
-		if (!eventName) return;
-
-		if (log.enabled) {
-			// eslint-disable-next-line no-console
-			log("dispatch scheduled", { item, eventName });
-		}
-
-		// Optional override per element:
-		// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
-		const overrideDelaySec = parseFloat(eventEl?.getAttribute("data-motion-countup-delay") || "");
-		const delaySec = Number.isFinite(overrideDelaySec)
-			? overrideDelaySec
-			: Number.isFinite(defaultDelaySec)
-			? defaultDelaySec
-			: Math.max(0, (durationSec || 0) * 0.5);
-
-		// Prevent duplicate timers if something re-inits quickly
-		if (item._ccCountupTimeout) clearTimeout(item._ccCountupTimeout);
-
-		item._ccCountupTimeout = setTimeout(() => {
-			ccFireEventWithRetry(eventName, { trigger, item }, { maxMs, intervalMs });
-			item._ccCountupTimeout = null;
-		}, Math.round(Math.max(0, delaySec) * 1000));
-	}
-
-	function initCircleStats({ start = "bottom bottom", once = true } = {}) {
+	function c_circleStats({ start = "bottom bottom", once = true } = {}) {
 		const log = createDebugLog("circle-stats");
 
 		function debounceLocal(fn, wait = 120) {
@@ -2399,7 +2277,7 @@ function main() {
 
 		const isMobile = () => window.matchMedia && window.matchMedia("(max-width: 767px)").matches;
 		const mobileNow = isMobile();
-		initCircleStats._lastIsMobile = mobileNow;
+		c_circleStats._lastIsMobile = mobileNow;
 
 		// Ensure vertical lines end at the center of the bg circle on load. This needs layout, so do immediate + next frame.
 		function setCircleStatLineOffsets(root = document) {
@@ -2432,23 +2310,23 @@ function main() {
 		requestAnimationFrame(() => setCircleStatLineOffsets());
 
 		// Safe re-init: only one resize listener for this init fn.
-		if (initCircleStats._onResize) {
-			window.removeEventListener("resize", initCircleStats._onResize);
-			initCircleStats._onResize = null;
+		if (c_circleStats._onResize) {
+			window.removeEventListener("resize", c_circleStats._onResize);
+			c_circleStats._onResize = null;
 		}
-		initCircleStats._onResize = debounceLocal(() => {
+		c_circleStats._onResize = debounceLocal(() => {
 			const nextIsMobile = isMobile();
-			if (initCircleStats._lastIsMobile !== nextIsMobile) {
-				initCircleStats._lastIsMobile = nextIsMobile;
+			if (c_circleStats._lastIsMobile !== nextIsMobile) {
+				c_circleStats._lastIsMobile = nextIsMobile;
 				// Layout changed enough (line switches orientation) that we should rebuild
 				// the timelines with the correct axis + transform origin.
-				initCircleStats({ start, once });
+				c_circleStats({ start, once });
 				return;
 			}
 
 			setCircleStatLineOffsets();
 		}, 120);
-		window.addEventListener("resize", initCircleStats._onResize, { passive: true });
+		window.addEventListener("resize", c_circleStats._onResize, { passive: true });
 
 		function clamp01(n) {
 			if (!Number.isFinite(n)) return 0;
@@ -2587,21 +2465,21 @@ function main() {
 						itemTl.to(
 							bgCirc,
 							{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0
+							0,
 						);
 					}
 					if (body) {
 						itemTl.to(
 							body,
 							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0
+							0,
 						);
 					}
 					if (statEl) {
 						itemTl.to(
 							statEl,
 							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0
+							0,
 						);
 					}
 
@@ -2654,13 +2532,13 @@ function main() {
 										item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
 									} catch (e) {}
 
-									ccDispatchCountUpForItem(item, component, {
+									helper_dispatchCountUp(item, component, {
 										durationSec: 0.5,
 										defaultDelaySec: 0,
 									});
 								},
 								[],
-								ringStart
+								ringStart,
 							);
 
 							itemTl.to(
@@ -2671,7 +2549,7 @@ function main() {
 									ease: "power2.out",
 									overwrite: "auto",
 								},
-								ringStart
+								ringStart,
 							);
 						}
 					}
@@ -2740,7 +2618,7 @@ function main() {
 							}
 							itemTl.eventCallback("onComplete", () => resolve());
 							itemTl.play(0);
-						})
+						}),
 				);
 
 				if (items.every((it) => it.dataset.ccCircleStatDone === "1")) {
@@ -2773,21 +2651,21 @@ function main() {
 					itemTl.to(
 						bgCirc,
 						{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0
+						0,
 					);
 				}
 				if (body) {
 					itemTl.to(
 						body,
 						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0
+						0,
 					);
 				}
 				if (statEl) {
 					itemTl.to(
 						statEl,
 						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0
+						0,
 					);
 				}
 
@@ -2840,13 +2718,13 @@ function main() {
 									item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
 								} catch (e) {}
 
-								ccDispatchCountUpForItem(item, component, {
+								helper_dispatchCountUp(item, component, {
 									durationSec: 0.5,
 									defaultDelaySec: 0,
 								});
 							},
 							[],
-							ringStart
+							ringStart,
 						);
 
 						itemTl.to(
@@ -2857,7 +2735,7 @@ function main() {
 								ease: "power2.out",
 								overwrite: "auto",
 							},
-							ringStart
+							ringStart,
 						);
 					}
 				}
@@ -2890,12 +2768,7 @@ function main() {
 		ScrollTrigger.refresh();
 	}
 
-	function initScrollReveals() {
-		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
-			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping initScrollReveals()");
-			return;
-		}
-
+	function anim_scrollReveals() {
 		const groups = Array.from(document.querySelectorAll(".cc-reveal"));
 		if (!groups.length) return;
 
@@ -2932,7 +2805,7 @@ function main() {
 			gsap.set(items, { autoAlpha: 0, y });
 
 			const ringsRoots = Array.from(group.querySelectorAll(".cc-reveal-rings"));
-			ringsRoots.forEach((ringsRoot) => setRingsInitial(ringsRoot));
+			ringsRoots.forEach((ringsRoot) => rings_setRingsInitial(ringsRoot));
 
 			const tl = gsap.timeline({ paused: true });
 
@@ -2949,21 +2822,21 @@ function main() {
 						overwrite: "auto",
 						clearProps: "y",
 						onStart: () => {
-							// Mark + emit a per-item reveal event so other animations (e.g. animTextFadeIn)
+							// Mark + emit a per-item reveal event so other animations (e.g. anim_textFadeIn)
 							// can sync to the cc-reveal timing without creating extra ScrollTriggers.
 							item.dataset.ccRevealDone = "1";
 							try {
 								item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
 							} catch (e) {}
 
-							ccDispatchCountUpForItem(item, group, { durationSec: duration }); // ✅ delayed dispatch
+							helper_dispatchCountUp(item, group, { durationSec: duration }); // ✅ delayed dispatch
 						},
 					},
-					t
+					t,
 				);
 			});
 
-			ringsRoots.forEach((ringsRoot) => addRingsToTimeline(tl, ringsRoot, 0));
+			ringsRoots.forEach((ringsRoot) => rings_addRingsToTimeline(tl, ringsRoot, 0));
 
 			let revealed = false;
 			let io = null;
@@ -3019,7 +2892,7 @@ function main() {
 							if (revealed) return;
 							if (entries.some((e) => e.isIntersecting || e.intersectionRatio > 0)) reveal();
 						},
-						{ root: null, rootMargin, threshold: 0.01 }
+						{ root: null, rootMargin, threshold: 0.01 },
 					);
 					io.observe(group);
 				} catch (e) {
@@ -3031,12 +2904,7 @@ function main() {
 		if (madeAny) ScrollTrigger.refresh();
 	}
 
-	function navDropdowns() {
-		if (typeof gsap === "undefined") {
-			console.warn("[clearclick] GSAP not found, skipping navDropdowns()");
-			return;
-		}
-
+	function nav_dropdowns() {
 		const dropdowns = Array.from(document.querySelectorAll(".nav_dd"));
 		if (!dropdowns.length) return;
 
@@ -3053,9 +2921,9 @@ function main() {
 		const debugDd = dropdowns[DEBUG_INDEX] || null;
 
 		// Kill previous init if this gets called more than once (e.g. Webflow/FS rerenders)
-		if (navDropdowns._mm) {
-			navDropdowns._mm.kill();
-			navDropdowns._mm = null;
+		if (nav_dropdowns._mm) {
+			nav_dropdowns._mm.kill();
+			nav_dropdowns._mm = null;
 		}
 
 		// Convenience: close all dropdowns (optionally except one)
@@ -3082,7 +2950,7 @@ function main() {
 		}
 
 		const mm = gsap.matchMedia();
-		navDropdowns._mm = mm;
+		nav_dropdowns._mm = mm;
 
 		// -------------------------
 		// Desktop: hover (> 991)
@@ -3120,7 +2988,7 @@ function main() {
 						backgroundColor: "#ffffff",
 						duration: 0.29,
 					},
-					0.01
+					0.01,
 				);
 				if (links.length) {
 					tl.to(
@@ -3130,7 +2998,7 @@ function main() {
 							duration: 0.2,
 							stagger: 0.05,
 						},
-						0.05
+						0.05,
 					);
 				}
 
@@ -3313,12 +3181,7 @@ function main() {
 		});
 	}
 
-	function openNav() {
-		if (typeof gsap === "undefined") {
-			console.warn("[clearclick] GSAP not found, skipping openNav()");
-			return;
-		}
-
+	function nav_open() {
 		const menuWrap = document.querySelector(".nav_menu-wrap");
 		const menu = document.querySelector(".nav_menu");
 		const bg = document.querySelector(".nav_menu-bg");
@@ -3331,9 +3194,9 @@ function main() {
 		if (!menu || !bg || !list || !buttons.length) return;
 
 		// Kill previous init if this gets called more than once
-		if (openNav._mm) {
-			openNav._mm.kill();
-			openNav._mm = null;
+		if (nav_open._mm) {
+			nav_open._mm.kill();
+			nav_open._mm = null;
 		}
 
 		function addListener(el, type, handler, store) {
@@ -3353,7 +3216,7 @@ function main() {
 
 		const items = [
 			...Array.from(list.children).filter(
-				(el) => el && (el.tagName === "A" || el.tagName === "DIV")
+				(el) => el && (el.tagName === "A" || el.tagName === "DIV"),
 			),
 			...(ctaWrap ? [ctaWrap] : []),
 		];
@@ -3382,7 +3245,7 @@ function main() {
 		}
 
 		const mm = gsap.matchMedia();
-		openNav._mm = mm;
+		nav_open._mm = mm;
 
 		// Mobile only
 		mm.add("(max-width: 991px)", () => {
@@ -3416,7 +3279,7 @@ function main() {
 					duration: 0.35, // tweakable
 					ease: "power2.out",
 				},
-				0
+				0,
 			);
 
 			tl.to(
@@ -3426,7 +3289,7 @@ function main() {
 					duration: 0.2,
 					ease: "power1.out",
 				},
-				0
+				0,
 			);
 
 			if (items.length) {
@@ -3438,7 +3301,7 @@ function main() {
 						stagger: 0.05,
 						ease: "power1.out",
 					},
-					0.05
+					0.05,
 				);
 			}
 
@@ -3484,148 +3347,8 @@ function main() {
 		});
 	}
 
-	// --------- shared ring animation (used across site) ----------
-	function getRingsFromSvg(svg) {
-		if (!svg) return null;
-		const ringA = svg.querySelector(".ring-a");
-		const ringB = svg.querySelector(".ring-b");
-		const ringC = svg.querySelector(".ring-c");
-		if (!ringA || !ringB || !ringC) return null;
-		return { ringA, ringB, ringC };
-	}
-
-	function setRingsInitial(svgOrRootEl) {
-		const svg =
-			svgOrRootEl?.tagName?.toLowerCase() === "svg"
-				? svgOrRootEl
-				: svgOrRootEl?.querySelector?.("svg");
-		const rings = getRingsFromSvg(svg);
-		if (!rings) return;
-
-		gsap.set([rings.ringA, rings.ringB, rings.ringC], {
-			opacity: 0,
-			scale: 0.85,
-			transformOrigin: "50% 50%",
-		});
-	}
-
-	function addRingsToTimeline(tl, svgOrRootEl, position = "<") {
-		const svg =
-			svgOrRootEl?.tagName?.toLowerCase() === "svg"
-				? svgOrRootEl
-				: svgOrRootEl?.querySelector?.("svg");
-		const rings = getRingsFromSvg(svg);
-		if (!rings) return;
-
-		// Match buildPaneTimeline ring feel
-		tl.to(
-			[rings.ringC, rings.ringB, rings.ringA],
-			{
-				opacity: 1,
-				scale: 1,
-				duration: 1,
-				ease: "power2.out",
-				stagger: 0.5,
-				overwrite: "auto",
-			},
-			position
-		);
-	}
-
-	// function expandSolutionServiceTags_v1() {
-	// 	const tagDefaultCount = 3;
-
-	// 	const solCards = Array.from(document.querySelectorAll(".sol-card"));
-	// 	if (!solCards.length) return;
-
-	// 	solCards.forEach((card) => {
-	// 		// get tags container .sol-card_services-list
-	// 		const tagsList = card.querySelector(".sol-card_services-list");
-	// 		if (!tagsList) return;
-	// 		// get more button in list
-	// 		const moreBtn = tagsList.querySelector(".sol-card_services-more");
-	// 		if (!moreBtn) return;
-	// 		//get all tags in list .c-service
-	// 		const tags = tagsList.querySelectorAll(".c-service");
-	// 		if (tags.length <= tagDefaultCount) {
-	// 			// no need to expand
-	// 			moreBtn.style.display = "none";
-	// 			card._tagsExpanded = true;
-	// 			return;
-	// 		}
-
-	// 		//set text of button to "+X more"
-	// 		const extraCount = tags.length - tagDefaultCount;
-	// 		moreBtn.textContent = `+ ${extraCount} more`;
-
-	// 		card._tagsExpanded = false;
-
-	// 		// hide tags beyond default count
-	// 		tags.forEach((tag, index) => {
-	// 			if (index >= tagDefaultCount) {
-	// 				gsap.set(tag, { display: "none" });
-	// 			}
-	// 		});
-
-	// 		// add click listener to more button
-	// 		moreBtn.addEventListener("click", onMoreClick);
-
-	// 		function onMoreClick(e) {
-	// 			e.preventDefault();
-
-	// 			if (card._tagsExpanded) return;
-
-	// 			const tagsList = card.querySelector(".sol-card_services-list");
-	// 			if (!tagsList) return;
-	// 			const moreBtn = tagsList.querySelector(".sol-card_services-more");
-	// 			if (!moreBtn) return;
-	// 			const tags = Array.from(tagsList.querySelectorAll(".c-service"));
-	// 			const hiddenTags = tags.slice(tagDefaultCount);
-
-	// 			// get current state of card
-	// 			const collapsedState = Flip.getState([card, tagsList], {
-	// 				props: "width,height",
-	// 			});
-
-	// 			gsap.set(tags, { display: "block" });
-	// 			gsap.set(moreBtn, { display: "none" });
-	// 			gsap.set(hiddenTags, { autoAlpha: 0 });
-
-	// 			const tl = gsap.timeline({ defaults: { overwrite: "auto" } });
-
-	// 			tl.add(
-	// 				Flip.from(collapsedState, {
-	// 					duration: 0.5,
-	// 					ease: "power1.inOut",
-	// 					// nested: true,
-	// 				}),
-	// 				0
-	// 			);
-
-	// 			tl.to(
-	// 				hiddenTags,
-	// 				{
-	// 					autoAlpha: 1,
-	// 					duration: 0.25,
-	// 					ease: "power2.out",
-	// 					stagger: 0.06,
-	// 					clearProps: "transform", // don't clear opacity/visibility (prevents snapping back)
-	// 				},
-	// 				0.12
-	// 			);
-
-	// 			card._tagsExpanded = true;
-	// 		}
-	// 	});
-	// }
-
-	function expandSolutionServiceTags() {
+	function anim_expandSolutionServiceTags() {
 		const tagDefaultCount = 3;
-
-		if (typeof gsap === "undefined") {
-			console.warn("[clearclick] GSAP not found, skipping expandSolutionServiceTags()");
-			return;
-		}
 
 		const hasFlip = typeof Flip !== "undefined" && typeof Flip.getState === "function";
 		const solCards = Array.from(document.querySelectorAll(".sol-card, .sols-carousel-slide"));
@@ -3775,7 +3498,7 @@ function main() {
 						duration: 0.5,
 						ease: "power1.inOut",
 					}),
-					0
+					0,
 				);
 			} else {
 				// Fallback: animate card height if Flip isn't available
@@ -3804,7 +3527,7 @@ function main() {
 						stagger: 0.06,
 						onComplete: () => gsap.set(hiddenTags, { clearProps: "opacity,visibility,transform" }),
 					},
-					0.12
+					0.12,
 				);
 			}
 
@@ -3845,11 +3568,11 @@ function main() {
 		});
 
 		// --- Resize handling (debounced) ---
-		if (expandSolutionServiceTags._onResize) {
-			window.removeEventListener("resize", expandSolutionServiceTags._onResize);
+		if (anim_expandSolutionServiceTags._onResize) {
+			window.removeEventListener("resize", anim_expandSolutionServiceTags._onResize);
 		}
 
-		expandSolutionServiceTags._onResize = debounce(() => {
+		anim_expandSolutionServiceTags._onResize = debounce(() => {
 			solCards.forEach((card) => {
 				const tagsList = getTagsList(card);
 				if (!tagsList) return;
@@ -3860,27 +3583,22 @@ function main() {
 			});
 		}, 150);
 
-		window.addEventListener("resize", expandSolutionServiceTags._onResize);
+		window.addEventListener("resize", anim_expandSolutionServiceTags._onResize);
 	}
 
-	function pinSolutionCardsMobile() {
-		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
-			console.warn("[clearclick] GSAP/ScrollTrigger not found, skipping pinSolutionCardsMobile()");
-			return;
-		}
-
+	function c_solutionStackMbl() {
 		const wrapper =
 			document.querySelector(".sol-listing_pin") || document.querySelector(".sol-listing_main");
 		if (!wrapper) return;
 
 		// Kill previous init if this gets called more than once
-		if (pinSolutionCardsMobile._mm) {
-			pinSolutionCardsMobile._mm.kill();
-			pinSolutionCardsMobile._mm = null;
+		if (c_solutionStackMbl._mm) {
+			c_solutionStackMbl._mm.kill();
+			c_solutionStackMbl._mm = null;
 		}
 
 		const mm = gsap.matchMedia();
-		pinSolutionCardsMobile._mm = mm;
+		c_solutionStackMbl._mm = mm;
 
 		mm.add("(max-width: 767px)", () => {
 			const cards = Array.from(wrapper.querySelectorAll(".sol-listing_list-item"));
@@ -4020,7 +3738,7 @@ function main() {
 				const targetOpacity = clamp(
 					baseOpacity - maxLayersAbove * OPACITY_STEP,
 					MIN_BG_OPACITY,
-					baseOpacity
+					baseOpacity,
 				);
 
 				// Ensure deterministic start state
@@ -4129,7 +3847,7 @@ function main() {
 		});
 	}
 
-	function timeline() {
+	function c_timeline() {
 		const log = createDebugLog("timeline");
 
 		const timelineSections = Array.from(document.querySelectorAll(".c-timeline"));
@@ -4185,7 +3903,7 @@ function main() {
 						duration: 0.8,
 						ease: "power1.inOut",
 					},
-					"<+0.25"
+					"<+0.25",
 				);
 				tl.from(
 					body,
@@ -4195,45 +3913,365 @@ function main() {
 						duration: 0.8,
 						ease: "power1.inOut",
 					},
-					"<+0.05"
+					"<+0.05",
 				);
 			});
 		});
 	}
 
-	/* general catch */
+	function c_colStats() {
+		const colStatsSections = gsap.utils.toArray(".c-stat-cols");
+		if (!colStatsSections.length) return;
+
+		const log = createDebugLog("colStats");
+
+		colStatsSections.forEach((section) => {
+			const stats = gsap.utils.toArray(".col-stat", section);
+			log("Found col-stats items:", stats.length);
+
+			const tl = gsap.timeline({
+				scrollTrigger: {
+					trigger: section,
+					start: "top 40%",
+					toggleActions: "play none none none",
+				},
+			});
+			stats.forEach((stat, index) => {
+				const number = stat.querySelector(".col-stat_stat"); // code component wrapper
+				const bg = stat.querySelector(".circle-stat_svg-bg"); // bg circle
+				const line1 = stat.querySelector(".col-stat_svg-side.is-1 line"); // left horizontal line
+				const line2 = stat.querySelector(".col-stat_svg-side.is-2 line"); // right horizontal line
+				const arcBottom = stat.querySelector(".col-stat_svg-arc.is-bottom"); // dashed arcs
+				const arcTop = stat.querySelector(".col-stat_svg-arc.is-top"); // dashed arcs
+				const title = stat.querySelector(".col-stat_title"); // title
+				const body = stat.querySelector(".col-stat_body"); // body text
+
+				// for first stat, don't do line1 anim, and for last stat, don't do line2 anim
+
+				gsap.set(bg, { transformOrigin: "50% 50%" });
+				// gsap.set([line1, line2, ...arcs], { drawSVG: "0%" });
+
+				// if (index !== 0) {
+				// 	tl.from(
+				// 		line1,
+				// 		{
+				// 			x2: 0,
+				// 			duration: 0.6,
+				// 			ease: "power1.inOut",
+				// 		},
+				// 		"<",
+				// 	);
+				// }
+				tl.from(
+					arcBottom,
+					{
+						attr: {
+							d: "M1 50 a 49 49 0 1 0 0 0",
+						},
+						duration: 0.8,
+						ease: "power1.inOut",
+					},
+					">-0.1",
+				);
+				// tl.from(
+				// 	arcTop,
+				// 	{
+				// 		attr: {
+				// 			d: "M1 50 a 49 49 0 0 0 1 0 0",
+				// 		},
+				// 		duration: 0.8,
+				// 		ease: "power1.inOut",
+				// 	},
+				// 	">-0.1",
+				// );
+				// if (index !== stats.length - 1) {
+				// 	tl.to(
+				// 		line2,
+				// 		{
+				// 			drawSVG: "100%",
+				// 			duration: 0.6,
+				// 			ease: "power1.inOut",
+				// 		},
+				// 		">-0.1",
+				// 	);
+				// }
+				tl.from(
+					bg,
+					{
+						scale: 0.9,
+						opacity: 0,
+						duration: 0.6,
+						ease: "power1.inOut",
+					},
+					0,
+				);
+				// fire count-up event when number is revealed
+				tl.add(() => {
+					helper_dispatchCountUp(number, "colStatRevealed", {
+						durationSec: 0.6,
+						defaultDelaySec: 0.2,
+					});
+				}, ">-0.4");
+				tl.from(
+					title,
+					{
+						y: 10,
+						opacity: 0,
+						duration: 0.8,
+						ease: "power1.inOut",
+					},
+					"<+0.25",
+				);
+				tl.from(
+					body,
+					{
+						y: 8,
+						opacity: 0,
+						duration: 0.8,
+						ease: "power1.inOut",
+					},
+					"<+0.05",
+				);
+			});
+		});
+	}
+
+	// --------- Finsweet hook: rerun init on FS render  ----------
+	function hookFinsweetRenders() {
+		window.FinsweetAttributes ||= [];
+		window.FinsweetAttributes.push([
+			"list",
+			(listInstances) => {
+				listInstances.forEach((inst) => {
+					if (inst.__ccTabsHooked) return;
+					inst.__ccTabsHooked = true;
+
+					// v2-style hook (commonly used by FS list solutions)
+					if (typeof inst.addHook === "function") {
+						inst.addHook(
+							"afterRender",
+							debounce(() => {
+								c_solutionTabs();
+								c_simpleTabs();
+								anim_scrollReveals();
+								c_caseStudiesSimpleCarousel();
+								c_solsCarousel();
+								anim_expandSolutionServiceTags();
+							}, 0),
+						);
+					}
+
+					// if the instance exposes an event emitter style API, support that too
+					if (typeof inst.on === "function") {
+						inst.on(
+							"renderitems",
+							debounce(() => {
+								c_solutionTabs();
+								c_simpleTabs();
+								anim_scrollReveals();
+								c_caseStudiesSimpleCarousel();
+								c_solsCarousel();
+								anim_expandSolutionServiceTags();
+							}, 0),
+						);
+					}
+				});
+
+				// run once when FS list is ready
+				c_solutionTabs();
+				c_simpleTabs();
+				anim_scrollReveals();
+				c_caseStudiesSimpleCarousel();
+				c_solsCarousel();
+				anim_expandSolutionServiceTags();
+			},
+		]);
+	}
+
+	// --------- HELPERS  ----------
+
+	function debounce(fn, wait = 100) {
+		let t;
+		return (...args) => {
+			clearTimeout(t);
+			t = setTimeout(() => fn(...args), wait);
+		};
+	}
+
+	/* DEBUG LOGGING UTILITY */
+	// to enable, set localStorage key "ccDebug[Name]" to "1" with the following command:
+	// localStorage.setItem("ccDebug[Name]", "1");
+	function createDebugLog(prefix, storageKey, defaultPrefix = "clearclick") {
+		let enabled = false;
+		try {
+			enabled = localStorage.getItem(`ccDebug[${prefix}]`) === "1";
+			// console.log("[clearclick] Debug log", prefix, "enabled:", enabled);
+		} catch (e) {
+			enabled = false;
+		}
+
+		const tag = prefix ? `[${prefix}]` : `[${defaultPrefix}]`;
+
+		const log = (...args) => {
+			if (!enabled) return;
+			console.log(tag, ...args);
+		};
+
+		log.enabled = enabled;
+
+		return log;
+	}
+
+	function helper_fireEventWithRetry(eventName, detail, { maxMs = 2500, intervalMs = 120 } = {}) {
+		if (!eventName) return;
+		const startedAt = performance.now();
+
+		const fire = () => {
+			try {
+				window.dispatchEvent(new CustomEvent(eventName, { detail }));
+			} catch (e) {}
+		};
+
+		// immediate + next frame
+		fire();
+		requestAnimationFrame(fire);
+
+		// keep trying for a bit (covers slow mount)
+		const timer = setInterval(() => {
+			fire();
+			if (performance.now() - startedAt >= maxMs) clearInterval(timer);
+		}, intervalMs);
+	}
+
+	function helper_dispatchCountUp(
+		item,
+		trigger,
+		{ durationSec, defaultDelaySec, maxMs = 2500, intervalMs = 120 } = {},
+	) {
+		if (!item) return;
+
+		const log = createDebugLog("countup", "ccDebugCountup");
+
+		// Support either:
+		// - the item itself having data-motion-countup-event
+		// - a child element having data-motion-countup-event
+		const el = item.querySelector("[data-motion-countup-event]");
+		const eventEl = item.hasAttribute?.("data-motion-countup-event") ? item : el;
+		const eventName = eventEl?.getAttribute?.("data-motion-countup-event")?.trim();
+		if (!eventName) return;
+
+		if (log.enabled) {
+			// eslint-disable-next-line no-console
+			log("dispatch scheduled", { item, eventName });
+		}
+
+		// Optional override per element:
+		// <div data-motion-countup-event="..." data-motion-countup-delay="0.3"></div>
+		const overrideDelaySec = parseFloat(eventEl?.getAttribute("data-motion-countup-delay") || "");
+		const delaySec = Number.isFinite(overrideDelaySec)
+			? overrideDelaySec
+			: Number.isFinite(defaultDelaySec)
+				? defaultDelaySec
+				: Math.max(0, (durationSec || 0) * 0.5);
+
+		// Prevent duplicate timers if something re-inits quickly
+		if (item._ccCountupTimeout) clearTimeout(item._ccCountupTimeout);
+
+		item._ccCountupTimeout = setTimeout(
+			() => {
+				helper_fireEventWithRetry(eventName, { trigger, item }, { maxMs, intervalMs });
+				item._ccCountupTimeout = null;
+			},
+			Math.round(Math.max(0, delaySec) * 1000),
+		);
+	}
+
+	// --------- shared ring animation (used across site) ----------
+	function rings_getRingsFromSvg(svg) {
+		if (!svg) return null;
+		const ringA = svg.querySelector(".ring-a");
+		const ringB = svg.querySelector(".ring-b");
+		const ringC = svg.querySelector(".ring-c");
+		if (!ringA || !ringB || !ringC) return null;
+		return { ringA, ringB, ringC };
+	}
+
+	function rings_setRingsInitial(svgOrRootEl) {
+		const svg =
+			svgOrRootEl?.tagName?.toLowerCase() === "svg"
+				? svgOrRootEl
+				: svgOrRootEl?.querySelector?.("svg");
+		const rings = rings_getRingsFromSvg(svg);
+		if (!rings) return;
+
+		gsap.set([rings.ringA, rings.ringB, rings.ringC], {
+			opacity: 0,
+			scale: 0.85,
+			transformOrigin: "50% 50%",
+		});
+	}
+
+	function rings_addRingsToTimeline(tl, svgOrRootEl, position = "<") {
+		const svg =
+			svgOrRootEl?.tagName?.toLowerCase() === "svg"
+				? svgOrRootEl
+				: svgOrRootEl?.querySelector?.("svg");
+		const rings = rings_getRingsFromSvg(svg);
+		if (!rings) return;
+
+		// Match buildPanelTimeline ring feel
+		tl.to(
+			[rings.ringC, rings.ringB, rings.ringA],
+			{
+				opacity: 1,
+				scale: 1,
+				duration: 1,
+				ease: "power2.out",
+				stagger: 0.5,
+				overwrite: "auto",
+			},
+			position,
+		);
+	}
+
+	/* general catch for GSAP */
 	if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") {
 		console.warn("[clearclick] GSAP/ScrollTrigger not found");
 		return;
 	}
+	/* general catch for Embla */
+	if (typeof EmblaCarousel === "undefined") {
+		console.warn("[clearclick] EmblaCarousel not found");
+		return;
+	}
 
-	homeHeroCorners();
-	hideShowNav();
-	openNav();
-	navDropdowns();
-	logoStaggers();
-	latestCarousel();
-	introStatsCarousel();
-	approachSliderCarousel();
-	caseStudiesCarousel();
-	caseStudiesSimpleCarousel();
-	solsCarousel();
-	orbit();
-	timeline();
+	anim_homeHeroCorners();
+	nav_hideShow();
+	nav_open();
+	nav_dropdowns();
+	anim_logoStaggers();
+	c_latestCarousel();
+	c_introStats();
+	c_approachCarousel();
+	c_caseStudiesCarousel();
+	c_caseStudiesSimpleCarousel();
+	c_solsCarousel();
+	c_orbit;
+	c_timeline();
 
-	initScrollReveals();
-	expandSolutionServiceTags();
-	pinSolutionCardsMobile();
+	anim_scrollReveals();
+	anim_expandSolutionServiceTags();
+	c_solutionStackMbl();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
 		document.body.classList.add("fonts-loaded");
-		animTextFadeIn();
-		initMotionCounters();
-		initCircleStats();
+		anim_textFadeIn();
+		c_circleStats();
+		c_colStats();
 	});
 
 	hookFinsweetRenders();
-	initAllTabs();
-	simpleTabs();
+	c_solutionTabs();
+	c_simpleTabs();
 }
