@@ -66,7 +66,7 @@ function main() {
 		const nav = document.querySelector(".nav");
 		if (!nav) return;
 
-		const debugLog = createDebugLog("nav_hideShow", "nav_hideShow");
+		const debugLog = createDebugLog("nav_hideShow");
 
 		const showThreshold = 50; // Always show when within this distance from top
 		const hideThreshold = 150; // Can hide only after passing this
@@ -148,7 +148,7 @@ function main() {
 
 		if (!els.length) return;
 
-		const log = createDebugLog("anim_textFadeIn", "anim_textFadeIn");
+		const log = createDebugLog("anim_textFadeIn");
 
 		els.forEach((el) => {
 			// --- safe re-init (Swup/FS rerenders/etc.) ---
@@ -236,7 +236,7 @@ function main() {
 		const components = document.querySelectorAll(".c-latest");
 		if (!components.length) return;
 
-		const log = createDebugLog("c_latestCarousel", "c_latestCarousel");
+		const log = createDebugLog("c_latestCarousel");
 
 		components.forEach((component) => {
 			const emblaNode = component.querySelector(".latest_list-wrap.embla");
@@ -317,7 +317,7 @@ function main() {
 	}
 
 	function c_approachCarousel() {
-		const log = createDebugLog("c_approachCarousel", "c_approachCarousel");
+		const log = createDebugLog("c_approachCarousel");
 
 		// DrawSVG support (optional but requested)
 		const hasDrawSVG =
@@ -521,7 +521,7 @@ function main() {
 
 		if (!mainRoot || !thumbRoot) return;
 
-		const log = createDebugLog("c_caseStudiesCarousel", "c_caseStudiesCarousel");
+		const log = createDebugLog("c_caseStudiesCarousel");
 
 		const mainViewport = mainRoot;
 		const thumbViewport = thumbRoot;
@@ -805,7 +805,7 @@ function main() {
 	}
 
 	function c_caseStudiesSimpleCarousel() {
-		const log = createDebugLog("c_caseStudiesSimpleCarousel", "c_caseStudiesSimpleCarousel");
+		const log = createDebugLog("c_caseStudiesSimpleCarousel");
 
 		const prefersReduced =
 			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1204,10 +1204,11 @@ function main() {
 	}
 
 	function c_orbit() {
-		if (typeof gsap === "undefined" || typeof ScrollTrigger === "undefined") return;
-
 		const component = document.querySelector(".c-process");
 		if (!component) return;
+
+		const log = createDebugLog("orbit");
+		log("Initializing");
 
 		const stickyEl = component.querySelector(".process_main");
 		if (!stickyEl) return;
@@ -1218,11 +1219,12 @@ function main() {
 			return;
 		}
 
-		const orbitEl = component.querySelector(".c-orbit");
+		const orbit = component.querySelector(".c-orbit");
 		const track = component.querySelector(".orbit_cards");
 
 		// Scope queries to this component (avoids collisions if multiple exist)
 		const cards = gsap.utils.toArray(component.querySelectorAll(".orbit-card"));
+		log("Found cards:", cards.length);
 		const ring = component.querySelector(".orbit_ring-progress");
 		const pulse = component.querySelector(".orbit_ring-pulse");
 
@@ -1269,6 +1271,7 @@ function main() {
 			});
 
 			cards.forEach((card, i) => {
+				// Stagger card fade-ins
 				tl.to(
 					card,
 					{
@@ -1323,15 +1326,15 @@ function main() {
 			gsap.set(cards, { opacity: 1 });
 
 			const getGutter = () => {
-				if (!orbitEl) return 16;
-				const raw = getComputedStyle(orbitEl).getPropertyValue("--cc-orbit-gutter");
+				if (!orbit) return 16;
+				const raw = getComputedStyle(orbit).getPropertyValue("--cc-orbit-gutter");
 				const g = parseFloat(raw || "");
 				return Number.isFinite(g) ? g : 16;
 			};
 
 			const getEndX = () => {
-				if (!orbitEl || !track) return 0;
-				const containerW = orbitEl.getBoundingClientRect().width;
+				if (!orbit || !track) return 0;
+				const containerW = orbit.getBoundingClientRect().width;
 				const overflow = track.scrollWidth - containerW;
 				const g = getGutter();
 				if (overflow <= 0) return g;
@@ -4102,7 +4105,7 @@ function main() {
 	/* DEBUG LOGGING UTILITY */
 	// to enable, set localStorage key "ccDebug[Name]" to "1" with the following command:
 	// localStorage.setItem("ccDebug[Name]", "1");
-	function createDebugLog(prefix, storageKey, defaultPrefix = "clearclick") {
+	function createDebugLog(prefix, defaultPrefix = "clearclick") {
 		let enabled = false;
 		try {
 			enabled = localStorage.getItem(`ccDebug[${prefix}]`) === "1";
@@ -4151,7 +4154,7 @@ function main() {
 	) {
 		if (!item) return;
 
-		const log = createDebugLog("countup", "ccDebugCountup");
+		const log = createDebugLog("countup");
 
 		// Support either:
 		// - the item itself having data-motion-countup-event
@@ -4257,7 +4260,7 @@ function main() {
 	c_caseStudiesCarousel();
 	c_caseStudiesSimpleCarousel();
 	c_solsCarousel();
-	c_orbit;
+	c_orbit();
 	c_timeline();
 
 	anim_scrollReveals();
