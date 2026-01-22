@@ -3587,6 +3587,7 @@ function main() {
 	}
 
 	function c_solutionStackMbl() {
+		return;
 		const wrapper =
 			document.querySelector(".sol-listing_pin") || document.querySelector(".sol-listing_main");
 		if (!wrapper) return;
