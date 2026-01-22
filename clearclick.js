@@ -3924,6 +3924,7 @@ function main() {
 	}
 
 	function c_colStats() {
+		// https://codepen.io/PointC/pen/WNrvjEy/1ecacafb5c4579ea20c360a6ac8f070c
 		const colStatsSections = gsap.utils.toArray(".c-stat-cols");
 		if (!colStatsSections.length) return;
 
@@ -3933,109 +3934,242 @@ function main() {
 			const stats = gsap.utils.toArray(".col-stat", section);
 			log("Found col-stats items:", stats.length);
 
+			// --- Explicit timing (single-timeline) ---
+			// Desired order across stats:
+			// stat 1 arc, stat 1 line 2, stat 2 line 1, stat 2 arc, stat 2 line 2, ...
+			// i.e. line 1 → arc → line 2 per stat, except outer lines are omitted.
+			const DUR_LINE = 0.4;
+			const DUR_ARC = 0.6;
+			const COUNTUP_LEAD_SEC = 0.4; // fire count-up slightly before SVG finishes
+			const TEXT_TITLE_DELAY_SEC = 0.25;
+			const TEXT_BODY_DELAY_SEC = 0.3;
+
+			const statTiming = (() => {
+				const out = [];
+				let t = 0;
+				for (let i = 0; i < stats.length; i++) {
+					const hasLine1 = i !== 0;
+					const hasLine2 = i !== stats.length - 1;
+					const tLine1 = hasLine1 ? t : null;
+					if (hasLine1) t += DUR_LINE;
+					const tArc = t;
+					t += DUR_ARC;
+					const tLine2 = hasLine2 ? t : null;
+					if (hasLine2) t += DUR_LINE;
+					out.push({ hasLine1, hasLine2, tLine1, tArc, tLine2 });
+				}
+				return out;
+			})();
+
 			const tl = gsap.timeline({
 				scrollTrigger: {
 					trigger: section,
-					start: "top 40%",
+					start: "top 90%",
 					toggleActions: "play none none none",
 				},
 			});
-			stats.forEach((stat, index) => {
+			stats.forEach((stat, stat_index) => {
+				const timing = statTiming[stat_index];
+				if (!timing) return;
+
+				/* non-SVG elements */
 				const number = stat.querySelector(".col-stat_stat"); // code component wrapper
-				const bg = stat.querySelector(".circle-stat_svg-bg"); // bg circle
-				const line1 = stat.querySelector(".col-stat_svg-side.is-1 line"); // left horizontal line
-				const line2 = stat.querySelector(".col-stat_svg-side.is-2 line"); // right horizontal line
-				const arcBottom = stat.querySelector(".col-stat_svg-arc.is-bottom"); // dashed arcs
-				const arcTop = stat.querySelector(".col-stat_svg-arc.is-top"); // dashed arcs
 				const title = stat.querySelector(".col-stat_title"); // title
 				const body = stat.querySelector(".col-stat_body"); // body text
+				const stat_bg = stat.querySelector(".col-stat_bg"); // background element
+
+				/* SVG elements */
+				const mainSVG = stat.querySelector("svg.col-stat_svg-main"); // main svg
+				if (!mainSVG) return;
+
+				const bg = mainSVG.querySelector(".col-stat_svg-bg");
+				const arcBottom = mainSVG.querySelector(".col-stat_svg-arc.is-bottom"); // dashed arcs
+				const arcTop = mainSVG.querySelector(".col-stat_svg-arc.is-top"); // dashed arcs
+
+				const sideSVGs = stat.querySelectorAll("svg.col-stat_svg-side"); // side svgs for horizontal lines
+				// const line1 = stat.querySelector(".col-stat_svg-side.is-1 line"); // left horizontal line
+				// const line2 = stat.querySelector(".col-stat_svg-side.is-2 line"); // right horizontal line
+
+				const mainSVG_mask = mainSVG.querySelector("mask");
+
+				// for each side SVG, get mask, set unique id, and point each line to it, and clone line into mask
+				const sideMasks = [];
+				const lineClones = [];
+				sideSVGs.forEach((sideSVG, sideIndex) => {
+					const sideSVG_mask = sideSVG.querySelector("mask");
+					if (sideSVG_mask) {
+						const maskId = "col-stat-mask-side-" + stat_index + "-" + sideIndex;
+						sideSVG_mask.setAttribute("id", maskId);
+
+						// point group around line to mask
+						const line = sideSVG.querySelector("line");
+						const group = line?.parentElement;
+						if (group) group.setAttribute("mask", `url(#${maskId})`);
+
+						sideMasks.push(sideSVG_mask);
+
+						// clone line into mask
+						if (line) {
+							const lineClone = line.cloneNode(true);
+							lineClone.removeAttribute("stroke-dasharray");
+							lineClone.removeAttribute("stroke-dashoffset");
+							gsap.set(lineClone, { attr: { stroke: "white" }, drawSVG: 0 });
+							sideSVG_mask.appendChild(lineClone);
+							lineClones.push(lineClone);
+						}
+					}
+				});
+
+				// set id of mask to a unique value and point arcs to it, and clone arcs into mask
+				if (mainSVG_mask) {
+					const id = "col-stat-mask-main-" + stat_index;
+					mainSVG_mask.setAttribute("id", id);
+
+					if (arcBottom) {
+						const arcBottomClone = arcBottom.cloneNode(true);
+
+						arcBottomClone.removeAttribute("stroke-dasharray");
+						arcBottomClone.removeAttribute("stroke-dashoffset");
+						gsap.set(arcBottomClone, { attr: { stroke: "white" }, drawSVG: 0 });
+						mainSVG_mask.appendChild(arcBottomClone);
+						arcBottom.setAttribute("mask", `url(#${id})`);
+					}
+					if (arcTop) {
+						const arcTopClone = arcTop.cloneNode(true);
+						arcTopClone.removeAttribute("stroke-dasharray");
+						arcTopClone.removeAttribute("stroke-dashoffset");
+						gsap.set(arcTopClone, { attr: { stroke: "white" }, drawSVG: 0 });
+						mainSVG_mask.appendChild(arcTopClone);
+						arcTop.setAttribute("mask", `url(#${id})`);
+					}
+				}
 
 				// for first stat, don't do line1 anim, and for last stat, don't do line2 anim
 
-				gsap.set(bg, { transformOrigin: "50% 50%" });
-				// gsap.set([line1, line2, ...arcs], { drawSVG: "0%" });
+				gsap.set(bg, { transformOrigin: "50% 50%", scale: 0.9, opacity: 0 });
+				gsap.set(lineClones, { drawSVG: "0" });
+				gsap.set([title, body, number], { y: 10, opacity: 0 });
+				gsap.set(stat_bg, { opacity: 0 });
 
-				// if (index !== 0) {
-				// 	tl.from(
-				// 		line1,
-				// 		{
-				// 			x2: 0,
-				// 			duration: 0.6,
-				// 			ease: "power1.inOut",
-				// 		},
-				// 		"<",
-				// 	);
-				// }
-				tl.from(
-					arcBottom,
-					{
-						attr: {
-							d: "M1 50 a 49 49 0 1 0 0 0",
+				// SVG sequencing (absolute times, based on stat index)
+				if (timing.hasLine1 && lineClones[0] && timing.tLine1 != null) {
+					tl.to(
+						lineClones[0],
+						{
+							drawSVG: true,
+							duration: DUR_LINE,
+							ease: "power1.inOut",
 						},
-						duration: 0.8,
-						ease: "power1.inOut",
-					},
-					">-0.1",
-				);
-				// tl.from(
-				// 	arcTop,
-				// 	{
-				// 		attr: {
-				// 			d: "M1 50 a 49 49 0 0 0 1 0 0",
-				// 		},
-				// 		duration: 0.8,
-				// 		ease: "power1.inOut",
-				// 	},
-				// 	">-0.1",
-				// );
-				// if (index !== stats.length - 1) {
-				// 	tl.to(
-				// 		line2,
-				// 		{
-				// 			drawSVG: "100%",
-				// 			duration: 0.6,
-				// 			ease: "power1.inOut",
-				// 		},
-				// 		">-0.1",
-				// 	);
-				// }
-				tl.from(
-					bg,
+						timing.tLine1,
+					);
+				}
+				if (mainSVG_mask && timing.tArc != null) {
+					tl.to(
+						mainSVG_mask.querySelectorAll("path"),
+						{
+							drawSVG: true,
+							duration: DUR_ARC,
+							ease: "none",
+						},
+						timing.tArc,
+					);
+				}
+				if (timing.hasLine2 && lineClones[1] && timing.tLine2 != null) {
+					tl.to(
+						lineClones[1],
+						{
+							drawSVG: true,
+							duration: DUR_LINE,
+							ease: "none",
+						},
+						timing.tLine2,
+					);
+				}
+
+				// main stat bg
+				tl.to(
+					stat_bg,
 					{
-						scale: 0.9,
-						opacity: 0,
-						duration: 0.6,
+						opacity: 1,
+						duration: 1.6,
 						ease: "power1.inOut",
+						immediateRender: false,
 					},
-					0,
+					timing.tArc != null ? timing.tArc - 0.2 : 0,
 				);
-				// fire count-up event when number is revealed
+
+				// Background + text reveal aligned to the arc start for each stat
+				if (bg && timing.tArc != null) {
+					tl.to(
+						bg,
+						{
+							scale: 1,
+							opacity: 1,
+							duration: 0.6,
+							ease: "none",
+							immediateRender: false,
+						},
+						timing.tArc,
+					);
+				}
+
+				// reveal number
+				if (number && timing.tArc != null) {
+					tl.to(
+						number,
+						{
+							y: 0,
+							opacity: 1,
+							duration: 0.8,
+							ease: "power1.inOut",
+							immediateRender: false,
+						},
+						timing.tArc + 0.1,
+					);
+				}
+
+				// fire count-up event when the SVG is mostly revealed (near the end of this stat's SVG segment)
+				const statSvgEnd = timing.hasLine2
+					? (timing.tLine2 ?? 0) + DUR_LINE
+					: (timing.tArc ?? 0) + DUR_ARC;
+				const countupAt = Math.max(0, statSvgEnd - COUNTUP_LEAD_SEC);
 				tl.add(() => {
-					helper_dispatchCountUp(number, "colStatRevealed", {
+					// IMPORTANT: helper_dispatchCountUp reads the event name from
+					// `data-motion-countup-event` on the element you pass in.
+					// In our markup that's on `.col-stat`, not `.col-stat_stat`.
+					helper_dispatchCountUp(stat, "colStatRevealed", {
 						durationSec: 0.6,
 						defaultDelaySec: 0.2,
+						maxMs: 8000,
 					});
-				}, ">-0.4");
-				tl.from(
-					title,
-					{
-						y: 10,
-						opacity: 0,
-						duration: 0.8,
-						ease: "power1.inOut",
-					},
-					"<+0.25",
-				);
-				tl.from(
-					body,
-					{
-						y: 8,
-						opacity: 0,
-						duration: 0.8,
-						ease: "power1.inOut",
-					},
-					"<+0.05",
-				);
+				}, countupAt);
+
+				if (title && timing.tArc != null) {
+					tl.to(
+						title,
+						{
+							y: 0,
+							opacity: 1,
+							duration: 0.8,
+							ease: "power1.inOut",
+							immediateRender: false,
+						},
+						timing.tArc + TEXT_TITLE_DELAY_SEC,
+					);
+				}
+				if (body && timing.tArc != null) {
+					tl.to(
+						body,
+						{
+							y: 0,
+							opacity: 1,
+							duration: 0.8,
+							ease: "power1.inOut",
+							immediateRender: false,
+						},
+						timing.tArc + TEXT_BODY_DELAY_SEC,
+					);
+				}
 			});
 		});
 	}
