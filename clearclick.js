@@ -4174,7 +4174,339 @@ function main() {
 		});
 	}
 
+	// function c_faq() {
+	// 	const items = Array.from(document.querySelectorAll(".faq_item"));
+	// 	if (!items.length) return;
+
+	// 	const closeItem = (item) => {
+	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
+	// 		const svg = item.querySelector(".faq_item-svg");
+	// 		if (!bodyWrap) return;
+
+	// 		item.classList.remove("is-open");
+	// 		gsap.killTweensOf([bodyWrap, svg].filter(Boolean));
+	// 		gsap.to(bodyWrap, { height: 0, duration: 0.3, ease: "power3.inOut" });
+	// 		if (svg) gsap.to(svg, { rotate: 0, duration: 0.25, ease: "power3.out" });
+	// 	};
+
+	// 	const openItem = (item) => {
+	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
+	// 		const svg = item.querySelector(".faq_item-svg");
+	// 		if (!bodyWrap) return;
+
+	// 		items.forEach((other) => {
+	// 			if (other !== item && other.classList.contains("is-open")) closeItem(other);
+	// 		});
+
+	// 		item.classList.add("is-open");
+	// 		gsap.killTweensOf([bodyWrap, svg].filter(Boolean));
+	// 		gsap.set(bodyWrap, { overflow: "hidden" });
+	// 		gsap.to(bodyWrap, { height: "auto", duration: 0.35, ease: "power3.out" });
+	// 		if (svg) gsap.to(svg, { rotate: 45, duration: 0.25, ease: "power3.out" });
+	// 	};
+
+	// 	// Initial state
+	// 	items.forEach((item) => {
+	// 		const header = item.querySelector(".faq_item-header-wrap");
+	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
+	// 		const svg = item.querySelector(".faq_item-svg");
+	// 		if (!header || !bodyWrap) return;
+
+	// 		item.classList.remove("is-open");
+	// 		gsap.set(bodyWrap, { height: 0, overflow: "hidden" });
+	// 		if (svg) gsap.set(svg, { rotate: 0 });
+
+	// 		header.addEventListener("click", (e) => {
+	// 			e.preventDefault();
+	// 			if (item.classList.contains("is-open")) closeItem(item);
+	// 			else openItem(item);
+	// 		});
+	// 	});
+	// }
+
 	// --------- Finsweet hook: rerun init on FS render  ----------
+
+	function c_faq() {
+		const root = document.querySelector(".c-faq");
+		if (!root) return;
+
+		/* --------------------------------
+	Elements
+	-------------------------------- */
+
+		const faqItems = Array.from(root.querySelectorAll(".faq_item"));
+		const topics = Array.from(
+			root.querySelectorAll(".faq_topic-list .faq_topic-item[data-topic-id]"),
+		);
+
+		const paneRoot = root.querySelector(".faq_right");
+		const dd = root.querySelector(".faq_topic-dd");
+		const ddToggle = root.querySelector(".faq_topic-dd-toggle");
+		const ddContent = root.querySelector(".faq_topic-dd-content");
+		const selector = root.querySelector(".faq_topic-selector");
+
+		if (!faqItems.length || !topics.length || !paneRoot) return;
+
+		/* --------------------------------
+	Build panes by topic
+	-------------------------------- */
+
+		const panes = new Map();
+		const topicIds = topics.map((t) => (t.dataset.topicId || "").trim()).filter(Boolean);
+		const topicIdSet = new Set(topicIds);
+
+		// Clear any existing CMS/previous-run panes; we'll rebuild deterministically.
+		Array.from(paneRoot.querySelectorAll(".faq_pane")).forEach((pane) => pane.remove());
+
+		// Create panes in the same order as the sidebar topics.
+		topicIds.forEach((topicId) => {
+			if (panes.has(topicId)) return;
+			const pane = document.createElement("div");
+			pane.className = "faq_pane";
+			pane.dataset.topicId = topicId;
+			gsap.set(pane, { autoAlpha: 0 });
+			panes.set(topicId, pane);
+			paneRoot.appendChild(pane);
+		});
+
+		// Place only FAQ items with a matching topic id into panes.
+		faqItems.forEach((faqItem) => {
+			const rawTopicId = (faqItem.dataset.topicId || "").trim();
+			if (!topicIdSet.has(rawTopicId)) return;
+			const targetPane = panes.get(rawTopicId);
+			if (!targetPane) return;
+			targetPane.appendChild(faqItem);
+		});
+
+		// Remove empty panes and hide their corresponding topics (if any).
+		Array.from(panes.entries()).forEach(([topicId, pane]) => {
+			if (pane.querySelector(".faq_item")) return;
+			pane.remove();
+			panes.delete(topicId);
+		});
+
+		// Keep the topics array in sync with panes (hide topics with no pane).
+		const liveTopics = topics.filter((t) => panes.has((t.dataset.topicId || "").trim()));
+		topics.forEach((t) => {
+			const id = (t.dataset.topicId || "").trim();
+			if (panes.has(id)) return;
+			const wrapper = t.closest?.(".w-dyn-item") || t;
+			wrapper.style.display = "none";
+		});
+		topics.splice(0, topics.length, ...liveTopics);
+		if (!topics.length) return;
+
+		const paneList = Array.from(panes.values());
+
+		/* --------------------------------
+	Accordion logic (scoped per pane)
+	-------------------------------- */
+
+		const closeItem = (item) => {
+			const body = item.querySelector(".faq_item-body-wrap");
+			const svg = item.querySelector(".faq_item-svg");
+			if (!body) return;
+
+			item.classList.remove("is-open");
+			gsap.killTweensOf([body, svg].filter(Boolean));
+
+			gsap.set(body, { height: body.offsetHeight });
+			gsap.to(body, { height: 0, duration: 0.3, ease: "power3.inOut" });
+			if (svg) gsap.to(svg, { rotate: 0, duration: 0.25, ease: "power3.out" });
+		};
+
+		const openItem = (item, pane) => {
+			const body = item.querySelector(".faq_item-body-wrap");
+			const svg = item.querySelector(".faq_item-svg");
+			if (!body) return;
+
+			pane
+				.querySelectorAll(".faq_item.is-open")
+				.forEach((other) => other !== item && closeItem(other));
+
+			item.classList.add("is-open");
+			gsap.killTweensOf([body, svg].filter(Boolean));
+			// gsap.set(body, { overflow: "hidden" });
+			gsap.to(body, {
+				height: "auto",
+				duration: 0.35,
+				ease: "power3.out",
+				// onComplete: () => gsap.set(body, { overflow: "visible" }),
+			});
+			if (svg) gsap.to(svg, { rotate: 45, duration: 0.25, ease: "power3.out" });
+		};
+
+		faqItems.forEach((faqItem) => {
+			const header = faqItem.querySelector(".faq_item-header-wrap");
+			const body = faqItem.querySelector(".faq_item-body-wrap");
+			const svg = faqItem.querySelector(".faq_item-svg");
+
+			if (!header || !body) return;
+
+			gsap.set(body, { height: 0, overflow: "hidden" });
+			if (svg) gsap.set(svg, { rotate: 0 });
+			faqItem.classList.remove("is-open");
+
+			if (header.dataset.ccFaqBound === "1") return;
+			header.dataset.ccFaqBound = "1";
+
+			header.addEventListener("click", () => {
+				const pane = faqItem.closest(".faq_pane");
+				if (!pane) return;
+
+				faqItem.classList.contains("is-open") ? closeItem(faqItem) : openItem(faqItem, pane);
+			});
+		});
+
+		/* --------------------------------
+	Pane switching
+	-------------------------------- */
+
+		const activateTopic = (topicId) => {
+			// panes
+			paneList.forEach((pane) => {
+				const active = pane.dataset.topicId === topicId;
+
+				gsap.to(pane, { autoAlpha: active ? 1 : 0, duration: 0.25, ease: "power3.out" });
+
+				if (!active) {
+					pane.querySelectorAll(".faq_item.is-open").forEach(closeItem);
+				}
+			});
+
+			// topic active states
+			topics.forEach((t) => t.classList.toggle("is-active", t.dataset.topicId === topicId));
+
+			// mobile selector label
+			if (selector) {
+				const activeTopic = topics.find((t) => t.dataset.topicId === topicId);
+				if (activeTopic) {
+					selector.innerHTML = activeTopic.outerHTML;
+				}
+			}
+
+			closeDropdown();
+		};
+
+		/* --------------------------------
+	Custom dropdown (mobile)
+	-------------------------------- */
+
+		let isOpen = false;
+		const mqMobile = window.matchMedia("(max-width: 767px)");
+
+		const dropdownEnabled = () => {
+			if (!ddToggle || !ddContent) return false;
+			// Mobile-only behavior; desktop should always show the full list.
+			return mqMobile.matches;
+		};
+
+		const openDropdown = () => {
+			if (!dropdownEnabled()) return;
+			isOpen = true;
+			if (dd) dd.classList.add("is-open");
+			gsap.killTweensOf(ddContent);
+			gsap.set(ddContent, { overflow: "hidden" });
+			gsap.fromTo(
+				ddContent,
+				{ height: 0 },
+				{
+					height: "auto",
+					duration: 0.3,
+					ease: "power3.out",
+					onComplete: () => gsap.set(ddContent, { height: "auto", overflow: "visible" }),
+				},
+			);
+		};
+
+		const closeDropdown = () => {
+			if (!dropdownEnabled()) return;
+			isOpen = false;
+			if (dd) dd.classList.remove("is-open");
+			gsap.killTweensOf(ddContent);
+			gsap.set(ddContent, { height: ddContent.offsetHeight, overflow: "hidden" });
+			gsap.to(ddContent, { height: 0, duration: 0.25, ease: "power3.inOut" });
+		};
+
+		const syncDropdownMode = () => {
+			if (!ddContent) return;
+			if (dropdownEnabled()) {
+				// Mobile mode: collapsed by default
+				if (!isOpen) {
+					gsap.killTweensOf(ddContent);
+					gsap.set(ddContent, { height: 0, overflow: "hidden" });
+					if (dd) dd.classList.remove("is-open");
+				} else {
+					gsap.set(ddContent, { height: "auto", overflow: "visible" });
+				}
+			} else {
+				// Desktop mode: always show full list, no inline collapsing styles
+				gsap.killTweensOf(ddContent);
+				gsap.set(ddContent, { clearProps: "height,overflow" });
+				isOpen = false;
+				if (dd) dd.classList.remove("is-open");
+			}
+		};
+
+		function toggleClickHandler() {
+			if (!dropdownEnabled()) return;
+
+			isOpen ? closeDropdown() : openDropdown();
+		}
+
+		if (ddToggle && ddContent) {
+			if (ddToggle.dataset.ccFaqBound !== "1") {
+				ddToggle.dataset.ccFaqBound = "1";
+				ddToggle.addEventListener("click", toggleClickHandler);
+			}
+
+			syncDropdownMode();
+
+			// Keep dropdown mode in sync across resizes/breakpoint changes.
+			if (c_faq._onDdResize) window.removeEventListener("resize", c_faq._onDdResize);
+			c_faq._onDdResize = debounce(syncDropdownMode, 150);
+			window.addEventListener("resize", c_faq._onDdResize);
+
+			// Prefer matchMedia change when supported.
+			if (c_faq._mq && c_faq._mqListener) {
+				try {
+					c_faq._mq.removeEventListener("change", c_faq._mqListener);
+				} catch (e) {
+					try {
+						c_faq._mq.removeListener(c_faq._mqListener);
+					} catch (e2) {}
+				}
+			}
+			c_faq._mq = mqMobile;
+			c_faq._mqListener = () => syncDropdownMode();
+			try {
+				mqMobile.addEventListener("change", c_faq._mqListener);
+			} catch (e) {
+				mqMobile.addListener(c_faq._mqListener);
+			}
+		}
+
+		/* --------------------------------
+	Topic clicks
+	-------------------------------- */
+
+		topics.forEach((topic) => {
+			if (topic.dataset.ccFaqBound === "1") return;
+			topic.dataset.ccFaqBound = "1";
+			topic.addEventListener("click", (e) => {
+				e.preventDefault();
+				activateTopic(topic.dataset.topicId);
+			});
+		});
+
+		/* --------------------------------
+	Initial state
+	-------------------------------- */
+
+		const firstTopicId = topics.find((t) => panes.has(t.dataset.topicId))?.dataset.topicId;
+		if (firstTopicId) activateTopic(firstTopicId);
+	}
+
 	function hookFinsweetRenders() {
 		window.FinsweetAttributes ||= [];
 		window.FinsweetAttributes.push([
@@ -4396,6 +4728,7 @@ function main() {
 	c_solsCarousel();
 	c_orbit();
 	c_timeline();
+	c_faq();
 
 	anim_scrollReveals();
 	anim_expandSolutionServiceTags();
