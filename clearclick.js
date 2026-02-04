@@ -3675,7 +3675,9 @@ function main() {
 		const tagDefaultCount = 3;
 
 		const hasFlip = typeof Flip !== "undefined" && typeof Flip.getState === "function";
-		const solCards = Array.from(document.querySelectorAll(".sol-card, .sols-carousel-slide"));
+		const getSolCards = () =>
+			Array.from(document.querySelectorAll(".sol-card, .sols-carousel-slide"));
+		const solCards = getSolCards();
 		if (!solCards.length) return;
 
 		function getTagsList(card) {
@@ -3718,6 +3720,77 @@ function main() {
 			if (!moreBtn) return;
 			const extraCount = Math.max(0, tagsCount - tagDefaultCount);
 			moreBtn.textContent = `+ ${extraCount} more`;
+		}
+
+		function bindMoreButton(card, moreBtn) {
+			if (!moreBtn) return;
+
+			// If the more button element was replaced (FS/Nest rerender), rebind.
+			if (
+				card._ccServicesMoreEl &&
+				card._ccServicesMoreEl !== moreBtn &&
+				card._ccServicesMoreClick
+			) {
+				try {
+					card._ccServicesMoreEl.removeEventListener("click", card._ccServicesMoreClick);
+				} catch (e) {}
+				card._ccServicesBound = false;
+			}
+
+			if (card._ccServicesBound) return;
+			card._ccServicesBound = true;
+			card._ccServicesMoreEl = moreBtn;
+
+			card._ccServicesMoreClick = (e) => {
+				e.preventDefault();
+				card._ccServicesUserExpanded = true;
+				expandCard(card, { animate: true });
+			};
+
+			moreBtn.addEventListener("click", card._ccServicesMoreClick);
+		}
+
+		function syncCard(card, { animate = false } = {}) {
+			const tagsList = getTagsList(card);
+			if (!tagsList) return;
+
+			const moreBtn = getMoreBtn(tagsList);
+			const tags = getTags(tagsList);
+			const tagsCount = tags.length;
+
+			// Store original displays up-front
+			tags.forEach((t) => storeDisplay(t, "inline-flex"));
+			storeDisplay(moreBtn, "inline-flex");
+
+			if (moreBtn) bindMoreButton(card, moreBtn);
+
+			// Track tag count so we can react when FS/Nest injects after initial init.
+			const lastCount = Number.isFinite(card._ccServicesLastTagCount)
+				? card._ccServicesLastTagCount
+				: null;
+			card._ccServicesLastTagCount = tagsCount;
+
+			// If tags arrived later and exceed default, ensure we re-collapse unless user explicitly expanded.
+			if (
+				!card._ccServicesUserExpanded &&
+				lastCount != null &&
+				lastCount <= tagDefaultCount &&
+				tagsCount > tagDefaultCount
+			) {
+				card._tagsExpanded = false;
+			}
+
+			// If there are no tags yet, we're likely waiting on FS/Nest; keep things tidy.
+			if (!tagsCount) {
+				tags.forEach(showEl);
+				hideEl(moreBtn);
+				card._tagsExpanded = false;
+				return;
+			}
+
+			// Respect explicit user expansion; otherwise enforce default collapsed state.
+			if (card._ccServicesUserExpanded || card._tagsExpanded) expandCard(card, { animate });
+			else collapseCard(card);
 		}
 
 		function collapseCard(card) {
@@ -3859,37 +3932,7 @@ function main() {
 		}
 
 		// Bind + initial sync
-		solCards.forEach((card) => {
-			const tagsList = getTagsList(card);
-			if (!tagsList) return;
-
-			const moreBtn = getMoreBtn(tagsList);
-			const tags = getTags(tagsList);
-
-			// If there isn't a more button, we can still collapse (hide >3) if desired,
-			// but your requirement assumes the button exists; so just exit.
-			if (!moreBtn) return;
-
-			// Store original displays up-front
-			tags.forEach((t) => storeDisplay(t, "inline-flex"));
-			storeDisplay(moreBtn, "inline-flex");
-
-			// Bind once
-			if (!card._ccServicesBound) {
-				card._ccServicesBound = true;
-
-				card._ccServicesMoreClick = (e) => {
-					e.preventDefault();
-					expandCard(card, { animate: true });
-				};
-
-				moreBtn.addEventListener("click", card._ccServicesMoreClick);
-			}
-
-			// Initial state: collapse unless already expanded
-			if (card._tagsExpanded) expandCard(card, { animate: false });
-			else collapseCard(card);
-		});
+		solCards.forEach((card) => syncCard(card, { animate: false }));
 
 		// --- Resize handling (debounced) ---
 		if (anim_expandSolutionServiceTags._onResize) {
@@ -3897,17 +3940,89 @@ function main() {
 		}
 
 		anim_expandSolutionServiceTags._onResize = debounce(() => {
-			solCards.forEach((card) => {
-				const tagsList = getTagsList(card);
-				if (!tagsList) return;
-
-				// On resize, don't animate; just ensure correct layout for current state
-				if (card._tagsExpanded) expandCard(card, { animate: false });
-				else collapseCard(card);
-			});
+			getSolCards().forEach((card) => syncCard(card, { animate: false }));
 		}, 150);
 
 		window.addEventListener("resize", anim_expandSolutionServiceTags._onResize);
+
+		// --- Dynamic content support (FS Attributes v2 Nest / late injections) ---
+		// Observe DOM changes so when service tags are injected after load we re-apply the default limit.
+		if (anim_expandSolutionServiceTags._mo) {
+			try {
+				anim_expandSolutionServiceTags._mo.disconnect();
+			} catch (e) {}
+			anim_expandSolutionServiceTags._mo = null;
+		}
+		if (anim_expandSolutionServiceTags._syncTimers) {
+			anim_expandSolutionServiceTags._syncTimers.forEach((t) => clearTimeout(t));
+			anim_expandSolutionServiceTags._syncTimers = null;
+		}
+
+		const resyncAll = debounce(() => {
+			getSolCards().forEach((card) => syncCard(card, { animate: false }));
+		}, 60);
+
+		if (typeof MutationObserver !== "undefined") {
+			const touchesServices = (node) => {
+				if (!node || node.nodeType !== 1) return false;
+				const el = /** @type {Element} */ (node);
+				if (
+					el.matches?.(
+						".c-service, .sol-card_services-list, .sols-carousel-slide_services-list, .sol-card_services-more",
+					)
+				)
+					return true;
+				if (
+					el.querySelector?.(
+						".c-service, .sol-card_services-list, .sols-carousel-slide_services-list, .sol-card_services-more",
+					)
+				)
+					return true;
+				return false;
+			};
+
+			anim_expandSolutionServiceTags._mo = new MutationObserver((mutations) => {
+				for (const m of mutations) {
+					if (m.type !== "childList") continue;
+
+					// Fast path: if the mutation happened inside a services list, resync.
+					if (
+						m.target &&
+						m.target.closest &&
+						m.target.closest(
+							".sol-card_services-list, .sols-carousel-slide_services-list, .sol-card, .sols-carousel-slide",
+						)
+					) {
+						resyncAll();
+						break;
+					}
+
+					const nodes = [
+						...(m.addedNodes ? Array.from(m.addedNodes) : []),
+						...(m.removedNodes ? Array.from(m.removedNodes) : []),
+					];
+					for (let i = 0; i < nodes.length && i < 25; i++) {
+						if (touchesServices(nodes[i])) {
+							resyncAll();
+							return;
+						}
+					}
+				}
+			});
+			try {
+				anim_expandSolutionServiceTags._mo.observe(document.body, {
+					childList: true,
+					subtree: true,
+				});
+			} catch (e) {}
+		}
+
+		// Extra safety: a couple of delayed syncs for late hydration without obvious mutations.
+		anim_expandSolutionServiceTags._syncTimers = [
+			setTimeout(resyncAll, 0),
+			setTimeout(resyncAll, 250),
+			setTimeout(resyncAll, 1000),
+		];
 	}
 
 	function c_solutionStackMbl() {
