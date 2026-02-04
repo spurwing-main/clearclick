@@ -171,53 +171,72 @@ function main() {
 			const tl = gsap.timeline({ paused: true });
 			tl.to(split.words, {
 				autoAlpha: 1,
-				duration: 0.75,
+				duration: 0.4,
 				ease: "power1.inOut",
-				stagger: 0.08,
+				stagger: 0.01,
 				overwrite: "auto",
-				onComplete: () => gsap.set(split.words, { clearProps: "opacity,visibility" }),
 			});
 
 			const revealItem = el.classList.contains("cc-reveal-item")
 				? el
 				: el.closest?.(".cc-reveal-item") || null;
 
-			// If this lives inside the cc-reveal system, do NOT add a separate ScrollTrigger.
-			// Instead, listen for the reveal item's own event so timings stay in sync.
+			// Inside the cc-reveal system we still want *reversible* scrub for the text.
+			// cc-reveal animates the item (autoAlpha/y) once, but this text fade can scrub
+			// independently. We just refresh measurements when the reveal starts because
+			// the reveal tween changes transforms and clears props.
+			let cleanup = null;
 			if (revealItem) {
-				const onReveal = () => tl.play(0);
-				revealItem.addEventListener("cc:reveal", onReveal, { once: true });
-
-				// If reveal already happened before fonts loaded / this init ran,
-				// force the end state so text isn't stuck dim.
-				if (revealItem.dataset?.ccRevealDone === "1") tl.progress(1);
-
-				el._ccTextFade = {
-					split,
-					tl,
-					st: null,
-					cleanup: () => revealItem.removeEventListener("cc:reveal", onReveal),
+				const onReveal = () => {
+					try {
+						tl.scrollTrigger?.refresh();
+					} catch (e) {}
+					// One more pass after transforms settle
+					setTimeout(() => {
+						try {
+							tl.scrollTrigger?.refresh();
+						} catch (e) {}
+					}, 120);
 				};
-				return;
+
+				revealItem.addEventListener("cc:reveal", onReveal);
+				cleanup = () => revealItem.removeEventListener("cc:reveal", onReveal);
 			}
 
-			const st = ScrollTrigger.create({
+			// Scrubbed reveal: maps scroll progress -> timeline progress.
+			// Designed to be reversible when scrolling back up.
+			tl.scrollTrigger = ScrollTrigger.create({
 				trigger: el,
-				start: "top 65%", // ~35% into viewport (tweak)
-				once: true, // kill after first run
-				onEnter: () => tl.play(0),
+				start: "top 65%",
+				end: "top 45%",
+				scrub: 0.6,
+				invalidateOnRefresh: true,
+				animation: tl,
 				onRefresh(self) {
-					// If we refreshed while already past the start, force final state immediately.
-					if (self.progress > 0) tl.progress(1);
+					// Handles: initial load past start/end + any layout shift refresh.
+					// (ScrollTrigger normally keeps this in sync, but this makes it deterministic.)
+					try {
+						tl.progress(self.progress);
+					} catch (e) {}
 				},
 			});
 
+			const st = tl.scrollTrigger;
 			madeAnyScrollTriggers = true;
 
-			// Covers initial load where we're already past the trigger
-			if (st.progress > 0) tl.progress(1);
+			// Ensure correct state on init (covers: page load past start/end)
+			try {
+				if (st) tl.progress(st.progress);
+			} catch (e) {}
 
-			el._ccTextFade = { split, tl, st };
+			// If this element was already revealed earlier, re-measure once.
+			if (revealItem && revealItem.dataset?.ccRevealDone === "1") {
+				try {
+					requestAnimationFrame(() => tl.scrollTrigger?.refresh());
+				} catch (e) {}
+			}
+
+			el._ccTextFade = { split, tl, st, cleanup };
 		});
 
 		// Helpful if any last-moment layout shifts happen after this init
@@ -1321,10 +1340,145 @@ function main() {
 			return () => gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
 		});
 
-		// Mobile: same idea—scrub track x + ring draw, no pinning
+		// Mobile: horizontally draggable slider (no scroll hijack)
 		mm.add("(max-width: 991px)", () => {
 			gsap.set(cards, { opacity: 1 });
 
+			if (!orbit || !track) return;
+			if (typeof Draggable === "undefined") {
+				console.warn("[clearclick] Draggable not loaded for c_orbit() mobile");
+				return;
+			}
+
+			let draggable = null;
+			let ro = null;
+			let raf = 0;
+
+			const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+			// ----------------------------
+			// Dots (optional)
+			// ----------------------------
+			const dotsNode =
+				component.querySelector(".latest_dots.is-orbit") ||
+				orbit.querySelector?.(".latest_dots.is-orbit") ||
+				null;
+
+			let dotNodes = [];
+			let snapByIndex = []; // index -> snapX
+			let snapPointsSorted = []; // snapX[] (sorted, deduped)
+			let activeDotIndex = -1;
+
+			function buildDots() {
+				if (!dotsNode) return;
+
+				// Rebuild deterministically
+				dotsNode.innerHTML = cards
+					.map((_, i) => `<button class="latest_dot" type="button" data-index="${i}"></button>`)
+					.join("");
+
+				dotNodes = Array.from(dotsNode.querySelectorAll(".latest_dot"));
+
+				dotNodes.forEach((dot) => {
+					dot.addEventListener("click", () => {
+						const idx = Number(dot.dataset.index);
+						if (!Number.isFinite(idx)) return;
+						scrollToIndex(idx, { animate: true });
+					});
+				});
+
+				// Set initial selected state
+				updateActiveDotFromX(getTrackX());
+			}
+
+			function setActiveDot(index) {
+				if (!dotsNode) return;
+				if (index === activeDotIndex) return;
+				activeDotIndex = index;
+
+				dotNodes.forEach((dot, i) => {
+					dot.classList.toggle("latest_dot--selected", i === index);
+				});
+			}
+
+			function getActiveIndexFromX(x) {
+				if (!snapByIndex.length) return 0;
+
+				let bestI = 0;
+				let bestD = Infinity;
+
+				for (let i = 0; i < snapByIndex.length; i++) {
+					const sx = snapByIndex[i];
+					if (!Number.isFinite(sx)) continue;
+					const d = Math.abs(x - sx);
+					if (d < bestD) {
+						bestD = d;
+						bestI = i;
+					}
+				}
+				return bestI;
+			}
+
+			function updateActiveDotFromX(x) {
+				if (!dotsNode) return;
+				setActiveDot(getActiveIndexFromX(x));
+			}
+
+			function scrollToIndex(index, { animate = true } = {}) {
+				const { minX, maxX } = getBounds();
+				const sx = snapByIndex[index];
+
+				if (!Number.isFinite(sx)) {
+					// fallback: snap to nearest sorted point if mapping is missing
+					const current = clamp(getTrackX(), minX, maxX);
+					const target = clamp(nearestSnap(current), minX, maxX);
+					gsap.set(track, { x: target });
+					draggable?.update?.();
+					updateRingFromX(getTrackX());
+					updateActiveDotFromX(getTrackX());
+					return;
+				}
+
+				const target = clamp(sx, minX, maxX);
+
+				if (!animate) {
+					gsap.set(track, { x: target });
+					draggable?.update?.();
+					updateRingFromX(target);
+					updateActiveDotFromX(target);
+					return;
+				}
+
+				gsap.killTweensOf(track);
+				try {
+					draggable?.disable?.();
+				} catch (e) {}
+
+				gsap.to(track, {
+					x: target,
+					duration: 0.35,
+					ease: "power2.out",
+					overwrite: "auto",
+					onUpdate: () => {
+						draggable?.update?.();
+						const x = getTrackX();
+						updateRingFromX(x);
+						updateActiveDotFromX(x);
+					},
+					onComplete: () => {
+						const x = getTrackX();
+						updateRingFromX(x);
+						updateActiveDotFromX(x);
+						try {
+							draggable?.enable?.();
+						} catch (e) {}
+					},
+				});
+			}
+
+			// ----------------------------
+			// Existing helpers
+			// ----------------------------
 			const getGutter = () => {
 				if (!orbit) return 16;
 				const raw = getComputedStyle(orbit).getPropertyValue("--cc-orbit-gutter");
@@ -1332,53 +1486,220 @@ function main() {
 				return Number.isFinite(g) ? g : 16;
 			};
 
-			const getEndX = () => {
-				if (!orbit || !track) return 0;
+			function getTrackX() {
+				const raw = gsap.getProperty(track, "x");
+				if (typeof raw === "number") return raw;
+				const n = parseFloat(String(raw ?? "0"));
+				return Number.isFinite(n) ? n : 0;
+			}
+
+			function getBounds() {
+				const gutter = getGutter();
 				const containerW = orbit.getBoundingClientRect().width;
-				const overflow = track.scrollWidth - containerW;
-				const g = getGutter();
-				if (overflow <= 0) return g;
-				return -overflow - g;
-			};
+				const contentW = track.scrollWidth;
+				const overflow = contentW - containerW;
+				const maxX = gutter;
+				const minX = overflow > 2 ? -overflow - gutter : gutter;
+				return { minX, maxX, gutter, overflow };
+			}
 
-			// Start with left gutter
-			if (track) gsap.set(track, { x: getGutter() });
+			function rebuildSnapPoints() {
+				const { minX, maxX, gutter } = getBounds();
 
-			const tl = gsap.timeline({
-				scrollTrigger: {
-					id: "ccOrbitSticky",
-					trigger: spacerEl,
-					start: "top bottom",
-					end: "bottom bottom", // full spacer s
-					scrub: 1,
-					invalidateOnRefresh: true,
-					// markers: true,
-				},
-			});
+				// index -> snapX (keeps dot mapping stable)
+				snapByIndex = cards.map((card) => {
+					const left = card?.offsetLeft ?? 0;
+					return clamp(gutter - left, minX, maxX);
+				});
 
-			if (track) {
-				tl.to(track, {
-					x: () => getEndX(),
-					duration: 1,
-					ease: "none",
+				// sorted, deduped list for nearestSnap()
+				snapPointsSorted = snapByIndex
+					.filter((n) => Number.isFinite(n))
+					.slice()
+					.sort((a, b) => a - b);
+
+				snapPointsSorted = snapPointsSorted.filter(
+					(v, i) => i === 0 || Math.abs(v - snapPointsSorted[i - 1]) > 0.5,
+				);
+
+				if (!snapPointsSorted.length) {
+					const x = clamp(getTrackX(), minX, maxX);
+					snapPointsSorted = [x];
+				}
+
+				// Keep dots in sync when layout changes
+				updateActiveDotFromX(getTrackX());
+			}
+
+			function nearestSnap(value) {
+				if (!snapPointsSorted.length) return value;
+				let best = snapPointsSorted[0];
+				let bestDist = Math.abs(value - best);
+				for (let i = 1; i < snapPointsSorted.length; i++) {
+					const p = snapPointsSorted[i];
+					const d = Math.abs(value - p);
+					if (d < bestDist) {
+						best = p;
+						bestDist = d;
+					}
+				}
+				return best;
+			}
+
+			function updateRingFromX(x) {
+				if (!ring) return;
+				const { minX, maxX } = getBounds();
+				const denom = maxX - minX;
+				const progress = denom === 0 ? 1 : clamp((maxX - x) / denom, 0, 1);
+				gsap.set(ring, { drawSVG: `${progress * 100}%` });
+			}
+
+			function snapToNearest({ animate = true } = {}) {
+				const { minX, maxX } = getBounds();
+				const current = clamp(getTrackX(), minX, maxX);
+				const target = clamp(nearestSnap(current), minX, maxX);
+
+				if (Math.abs(target - current) < 0.75) {
+					updateRingFromX(current);
+					updateActiveDotFromX(current);
+					return;
+				}
+
+				if (animate) {
+					try {
+						draggable?.disable?.();
+					} catch (e) {}
+
+					gsap.to(track, {
+						x: target,
+						duration: 0.35,
+						ease: "power2.out",
+						overwrite: "auto",
+						onUpdate: () => {
+							draggable?.update?.();
+							const x = getTrackX();
+							updateRingFromX(x);
+							updateActiveDotFromX(x);
+						},
+						onComplete: () => {
+							const x = getTrackX();
+							updateRingFromX(x);
+							updateActiveDotFromX(x);
+							try {
+								draggable?.enable?.();
+							} catch (e) {}
+						},
+					});
+				} else {
+					gsap.set(track, { x: target });
+					draggable?.update?.();
+					updateRingFromX(target);
+					updateActiveDotFromX(target);
+				}
+			}
+
+			function applyLayout({ snap = false } = {}) {
+				const { minX, maxX, gutter, overflow } = getBounds();
+				const x = clamp(getTrackX(), minX, maxX);
+				gsap.set(track, { x: Number.isFinite(x) ? x : gutter });
+
+				rebuildSnapPoints();
+
+				if (draggable) {
+					try {
+						draggable.applyBounds({ minX, maxX });
+						if (overflow <= 2) draggable.disable();
+						else draggable.enable();
+						draggable.update();
+					} catch (e) {}
+				}
+
+				const nowX = getTrackX();
+				updateRingFromX(nowX);
+				updateActiveDotFromX(nowX);
+
+				if (snap) snapToNearest({ animate: false });
+			}
+
+			function scheduleLayout(opts = {}) {
+				if (raf) cancelAnimationFrame(raf);
+				raf = requestAnimationFrame(() => {
+					raf = 0;
+					applyLayout(opts);
 				});
 			}
 
-			if (ring) {
-				tl.to(
-					ring,
-					{
-						drawSVG: "100%",
-						duration: 1,
-						ease: "none",
-					},
-					"0",
-				);
+			// Start with left gutter and build initial snap points
+			gsap.set(track, { x: getGutter() });
+			rebuildSnapPoints();
+			buildDots();
+
+			const { minX, maxX, overflow } = getBounds();
+			draggable = Draggable.create(track, {
+				type: "x",
+				dragClickables: true,
+				allowNativeTouchScrolling: true,
+				bounds: { minX, maxX },
+				onPress: () => {
+					gsap.killTweensOf(track);
+				},
+				onDrag: () => {
+					const x = getTrackX();
+					updateRingFromX(x);
+					updateActiveDotFromX(x);
+				},
+				onDragEnd: () => snapToNearest({ animate: true }),
+				onRelease: () => snapToNearest({ animate: true }),
+			})?.[0];
+
+			if (draggable && overflow <= 2) {
+				try {
+					draggable.disable();
+				} catch (e) {}
+			}
+
+			orbit._draggable = draggable;
+			applyLayout({ snap: true });
+
+			const onResize = () => scheduleLayout({ snap: false });
+			window.addEventListener("resize", onResize);
+
+			if (typeof ResizeObserver !== "undefined") {
+				ro = new ResizeObserver(() => scheduleLayout({ snap: false }));
+				try {
+					ro.observe(orbit);
+					ro.observe(track);
+				} catch (e) {}
 			}
 
 			return () => {
-				tl.scrollTrigger?.kill();
-				tl.kill();
+				window.removeEventListener("resize", onResize);
+				if (raf) cancelAnimationFrame(raf);
+				raf = 0;
+
+				// Clear dots
+				if (dotsNode) {
+					try {
+						dotsNode.innerHTML = "";
+					} catch (e) {}
+				}
+				dotNodes = [];
+				snapByIndex = [];
+				snapPointsSorted = [];
+				activeDotIndex = -1;
+
+				if (ro) {
+					try {
+						ro.disconnect();
+					} catch (e) {}
+					ro = null;
+				}
+				try {
+					draggable?.kill?.();
+				} catch (e) {}
+				if (orbit._draggable === draggable) orbit._draggable = null;
+				gsap.killTweensOf(track);
+				gsap.set(track, { clearProps: "transform" });
 			};
 		});
 	}
@@ -3871,7 +4192,7 @@ function main() {
 						start: "top 80%",
 						endTrigger: items[items.length - 1],
 						end: "bottom bottom",
-						scrub: 5,
+						scrub: 1,
 					},
 					scaleY: 1,
 					ease: "linear",
