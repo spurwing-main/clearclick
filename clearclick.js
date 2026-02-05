@@ -2260,16 +2260,63 @@ function main() {
 			let ro = null;
 			let rafMeasure = 0;
 
+			const mqMobile = window.matchMedia ? window.matchMedia("(max-width: 767px)") : null;
+
 			const CLS_OVERFLOW = "has-overflow";
 			const CLS_OVERFLOW_LEFT = "has-overflow-left";
 			const CLS_OVERFLOW_RIGHT = "has-overflow-right";
 			const EPS = 1; // px tolerance to avoid flicker at bounds
 
+			function parseCssLengthToPx(rawValue) {
+				const raw = String(rawValue || "").trim();
+				if (!raw) return 0;
+
+				const n = parseFloat(raw);
+				if (!Number.isFinite(n)) return 0;
+
+				// Default unit: px (CSS custom properties commonly store px)
+				if (raw.endsWith("rem")) {
+					const remPx =
+						parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16;
+					return n * remPx;
+				}
+				return n;
+			}
+
+			function getMobileStartOffsetPx() {
+				if (!mqMobile?.matches) return 0;
+				const targetEl = component.querySelector(".simple-tabs_panel-media.is-hidden"); // pull margin from hidden media (edge-bleed technique) if available
+				if (targetEl) {
+					const computed = getComputedStyle(targetEl);
+					const ml = parseCssLengthToPx(computed.marginLeft);
+					return ml;
+				}
+			}
+
 			function getBounds() {
 				const viewportW = tabListWrap.getBoundingClientRect().width;
 				const contentW = tabList.scrollWidth;
+				const offset = getMobileStartOffsetPx();
+				// Consider the inset when deciding overflow: a list that fits at x=0 may overflow at x=offset.
+				const hasOverflow = contentW + offset > viewportW + 2;
+				console.log("getBounds", { viewportW, contentW, offset, hasOverflow });
+
+				if (!hasOverflow) {
+					// Still start inset even without overflow, but lock the position.
+					return {
+						minX: offset,
+						maxX: offset,
+						viewportW,
+						contentW,
+						hasOverflow,
+						offset,
+					};
+				}
+
 				const minX = Math.min(0, viewportW - contentW);
-				return { minX, maxX: 0, viewportW, contentW };
+				// Allow dragging between x=minX and x=offset (inset state).
+				const maxX = offset;
+				return { minX, maxX, viewportW, contentW, hasOverflow, offset };
 			}
 
 			function getTabListX() {
@@ -2280,8 +2327,7 @@ function main() {
 			}
 
 			function updateOverflowClasses() {
-				const { minX, maxX, viewportW, contentW } = getBounds();
-				const hasOverflow = contentW > viewportW + 2;
+				const { minX, maxX, viewportW, contentW, hasOverflow } = getBounds();
 
 				tabListWrap.classList.toggle(CLS_OVERFLOW, hasOverflow);
 
@@ -2299,9 +2345,8 @@ function main() {
 			}
 
 			function applyDraggableIfNeeded() {
-				const { minX, maxX, viewportW, contentW } = getBounds();
-				const hasOverflow = contentW > viewportW + 2;
-				log("overflow check", { viewportW, contentW, hasOverflow, minX, maxX });
+				const { minX, maxX, viewportW, contentW, hasOverflow, offset } = getBounds();
+				log("overflow check", { viewportW, contentW, hasOverflow, minX, maxX, offset });
 
 				if (!hasOverflow) {
 					if (draggable) {
@@ -2311,7 +2356,7 @@ function main() {
 						} catch (e) {}
 						draggable = null;
 					}
-					gsap.set(tabList, { x: 0 });
+					gsap.set(tabList, { x: offset || 0 });
 					updateOverflowClasses();
 					return;
 				}
@@ -2351,7 +2396,8 @@ function main() {
 
 				const { minX, maxX } = getBounds();
 				const currentX = gsap.getProperty(tabList, "x");
-				const targetX = clamp(-btn.offsetLeft, minX, maxX);
+				// If maxX is > 0 (mobile overflow), we use it as the left-edge gap.
+				const targetX = clamp(-btn.offsetLeft + maxX, minX, maxX);
 				log("scroll tab", { index, label: btn.textContent, currentX, targetX });
 
 				if (Math.abs(targetX - currentX) < 1) return;
