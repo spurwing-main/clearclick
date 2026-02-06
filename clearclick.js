@@ -4756,7 +4756,7 @@ function main() {
 					trigger: stats[0],
 					start: "bottom bottom+=10%",
 					toggleActions: "play none none none",
-					markers: true,
+					markers: false,
 				},
 			});
 			stats.forEach((stat, stat_index) => {
