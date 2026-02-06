@@ -1353,8 +1353,28 @@ function main() {
 			let draggable = null;
 			let ro = null;
 			let raf = 0;
+			let pressSnapIndex = 0;
+			let pressSnapX = 0;
 
 			const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
+
+			// More sensitive snap: how far (fraction of the snap distance) you must drag
+			// from the *starting* snap to advance to the next/prev.
+			// Default 0.3 (vs ~0.5 for pure nearest-snap).
+			// Optional override: `data-cc-orbit-snap-threshold="0.25"` on `.c-orbit`.
+			const snapThresholdRatio = (() => {
+				const raw = orbit?.getAttribute?.("data-cc-orbit-snap-threshold");
+				const n = raw == null ? 0.1 : parseFloat(raw);
+				if (!Number.isFinite(n)) return 0.1;
+				return Math.min(0.49, Math.max(0.05, n));
+			})();
+
+			const snapThresholdMinPx = (() => {
+				const raw = orbit?.getAttribute?.("data-cc-orbit-snap-min-px");
+				const n = raw == null ? 6 : parseFloat(raw);
+				if (!Number.isFinite(n)) return 6;
+				return Math.min(48, Math.max(0, n));
+			})();
 
 			// ----------------------------
 			// Dots (optional)
@@ -1598,6 +1618,60 @@ function main() {
 				}
 			}
 
+			function snapToIntent({ animate = true } = {}) {
+				const { minX, maxX } = getBounds();
+				const currentX = clamp(getTrackX(), minX, maxX);
+
+				if (!snapByIndex.length) {
+					snapToNearest({ animate });
+					return;
+				}
+
+				let baseIndex = pressSnapIndex;
+				if (!Number.isFinite(baseIndex) || baseIndex < 0 || baseIndex >= snapByIndex.length) {
+					baseIndex = getActiveIndexFromX(currentX);
+				}
+				const baseX = snapByIndex[baseIndex];
+				if (!Number.isFinite(baseX)) {
+					snapToNearest({ animate });
+					return;
+				}
+
+				// Small deadzone: treat tiny movement as "snap back".
+				const delta = currentX - baseX;
+				if (Math.abs(delta) < 1) {
+					scrollToIndex(baseIndex, { animate });
+					return;
+				}
+
+				// Dragging left => track x decreases => move forward (index + 1)
+				const dir = delta < 0 ? 1 : -1;
+				let targetIndex = baseIndex;
+
+				while (true) {
+					const nextIndex = targetIndex + dir;
+					if (nextIndex < 0 || nextIndex >= snapByIndex.length) break;
+					const fromX = snapByIndex[targetIndex];
+					const toX = snapByIndex[nextIndex];
+					if (!Number.isFinite(fromX) || !Number.isFinite(toX)) break;
+
+					const dist = Math.abs(toX - fromX);
+					const required = Math.max(snapThresholdMinPx, dist * snapThresholdRatio);
+
+					if (dir > 0) {
+						// Moving left: x must drop enough from the current snap
+						if (currentX <= fromX - required) targetIndex = nextIndex;
+						else break;
+					} else {
+						// Moving right: x must rise enough from the current snap
+						if (currentX >= fromX + required) targetIndex = nextIndex;
+						else break;
+					}
+				}
+
+				scrollToIndex(targetIndex, { animate });
+			}
+
 			function applyLayout({ snap = false } = {}) {
 				const { minX, maxX, gutter, overflow } = getBounds();
 				const x = clamp(getTrackX(), minX, maxX);
@@ -1642,14 +1716,16 @@ function main() {
 				bounds: { minX, maxX },
 				onPress: () => {
 					gsap.killTweensOf(track);
+					rebuildSnapPoints();
+					pressSnapIndex = getActiveIndexFromX(getTrackX());
+					pressSnapX = snapByIndex[pressSnapIndex];
 				},
 				onDrag: () => {
 					const x = getTrackX();
 					updateRingFromX(x);
 					updateActiveDotFromX(x);
 				},
-				onDragEnd: () => snapToNearest({ animate: true }),
-				onRelease: () => snapToNearest({ animate: true }),
+				onRelease: () => snapToIntent({ animate: true }),
 			})?.[0];
 
 			if (draggable && overflow <= 2) {
