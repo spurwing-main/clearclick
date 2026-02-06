@@ -1388,6 +1388,21 @@ function main() {
 			let snapByIndex = []; // index -> snapX
 			let snapPointsSorted = []; // snapX[] (sorted, deduped)
 			let activeDotIndex = -1;
+			let activeCardIndex = -1;
+
+			function setActiveCard(index) {
+				if (!cards || !cards.length) return;
+				const next = Math.max(0, Math.min(index ?? 0, cards.length - 1));
+				if (next === activeCardIndex) return;
+				activeCardIndex = next;
+				cards.forEach((card, i) => {
+					card?.classList?.toggle?.("is-active", i === next);
+				});
+			}
+
+			function updateActiveCardFromX(x) {
+				setActiveCard(getActiveIndexFromX(x));
+			}
 
 			function buildDots() {
 				if (!dotsNode) return;
@@ -1456,6 +1471,7 @@ function main() {
 					draggable?.update?.();
 					updateRingFromX(getTrackX());
 					updateActiveDotFromX(getTrackX());
+					updateActiveCardFromX(getTrackX());
 					return;
 				}
 
@@ -1466,6 +1482,7 @@ function main() {
 					draggable?.update?.();
 					updateRingFromX(target);
 					updateActiveDotFromX(target);
+					setActiveCard(index);
 					return;
 				}
 
@@ -1484,11 +1501,13 @@ function main() {
 						const x = getTrackX();
 						updateRingFromX(x);
 						updateActiveDotFromX(x);
+						updateActiveCardFromX(x);
 					},
 					onComplete: () => {
 						const x = getTrackX();
 						updateRingFromX(x);
 						updateActiveDotFromX(x);
+						setActiveCard(index);
 						try {
 							draggable?.enable?.();
 						} catch (e) {}
@@ -1549,6 +1568,7 @@ function main() {
 
 				// Keep dots in sync when layout changes
 				updateActiveDotFromX(getTrackX());
+				updateActiveCardFromX(getTrackX());
 			}
 
 			function nearestSnap(value) {
@@ -1582,6 +1602,7 @@ function main() {
 				if (Math.abs(target - current) < 0.75) {
 					updateRingFromX(current);
 					updateActiveDotFromX(current);
+					updateActiveCardFromX(current);
 					return;
 				}
 
@@ -1600,11 +1621,13 @@ function main() {
 							const x = getTrackX();
 							updateRingFromX(x);
 							updateActiveDotFromX(x);
+							updateActiveCardFromX(x);
 						},
 						onComplete: () => {
 							const x = getTrackX();
 							updateRingFromX(x);
 							updateActiveDotFromX(x);
+							updateActiveCardFromX(x);
 							try {
 								draggable?.enable?.();
 							} catch (e) {}
@@ -1615,6 +1638,7 @@ function main() {
 					draggable?.update?.();
 					updateRingFromX(target);
 					updateActiveDotFromX(target);
+					updateActiveCardFromX(target);
 				}
 			}
 
@@ -1691,6 +1715,7 @@ function main() {
 				const nowX = getTrackX();
 				updateRingFromX(nowX);
 				updateActiveDotFromX(nowX);
+				updateActiveCardFromX(nowX);
 
 				if (snap) snapToNearest({ animate: false });
 			}
@@ -1724,6 +1749,7 @@ function main() {
 					const x = getTrackX();
 					updateRingFromX(x);
 					updateActiveDotFromX(x);
+					updateActiveCardFromX(x);
 				},
 				onRelease: () => snapToIntent({ animate: true }),
 			})?.[0];
@@ -1763,6 +1789,10 @@ function main() {
 				snapByIndex = [];
 				snapPointsSorted = [];
 				activeDotIndex = -1;
+				activeCardIndex = -1;
+				cards.forEach((card) => {
+					card?.classList?.remove?.("is-active");
+				});
 
 				if (ro) {
 					try {
