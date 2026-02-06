@@ -4533,6 +4533,44 @@ function main() {
 				});
 			};
 
+			const dimOtherPins = (activeId) => {
+				if (!activeId || !pins.length) return;
+				pins.forEach((pin) => {
+					const pinId = getLocationId(pin);
+					if (!pinId) return;
+					gsap.to(pin, {
+						opacity: pinId === activeId ? 1 : DIM_OPACITY,
+						duration: FADE_DUR,
+						ease: "power1.out",
+						overwrite: "auto",
+					});
+				});
+			};
+
+			const animateActivePin = (activeId) => {
+				if (!activeId || !pins.length) return;
+				const activePin = pins.find((pin) => getLocationId(pin) === activeId);
+				if (!activePin) return;
+				activePin.classList.add("is-active");
+			};
+
+			const resetActivePin = () => {
+				if (!pins.length) return;
+				pins.forEach((pin) => pin.classList.remove("is-active"));
+			};
+
+			const resetPins = () => {
+				if (!pins.length) return;
+				pins.forEach((pin) => {
+					gsap.to(pin, {
+						opacity: 1,
+						duration: FADE_DUR,
+						ease: "power1.out",
+						overwrite: "auto",
+					});
+				});
+			};
+
 			const resetCards = () => {
 				if (!locationCards.length) return;
 
@@ -4567,6 +4605,36 @@ function main() {
 				}
 			};
 
+			const onPinEnter = (e) => {
+				const pin = e.currentTarget;
+				const activeId = getLocationId(pin);
+				if (!activeId) return;
+				dimOtherCards(activeId);
+				dimOtherPins(activeId);
+				animateActivePin(activeId);
+			};
+
+			const onPinLeave = (e) => {
+				resetCards();
+				resetPins();
+				resetActivePin();
+			};
+
+			const onCardEnter = (e) => {
+				const card = e.currentTarget;
+				const activeId = getLocationId(card);
+				if (!activeId) return;
+				dimOtherCards(activeId);
+				dimOtherPins(activeId);
+				animateActivePin(activeId);
+			};
+
+			const onCardLeave = (e) => {
+				resetCards();
+				resetPins();
+				resetActivePin();
+			};
+
 			const cleanupFns = [];
 			section._ccLocationsCleanup = () => {
 				cleanupFns.forEach((fn) => {
@@ -4593,16 +4661,23 @@ function main() {
 				const activeId = getLocationId(pin);
 				if (!activeId) return;
 
-				const onEnter = () => dimOtherCards(activeId);
-				const onLeave = () => resetCards();
-
-				pin.addEventListener("mouseover", onEnter);
-				pin.addEventListener("pointerleave", onLeave);
-				pin.addEventListener("focus", onEnter);
-				pin.addEventListener("mouseleave", onLeave);
+				pin.addEventListener("mouseover", onPinEnter);
+				pin.addEventListener("mouseleave", onPinLeave);
 				cleanupFns.push(() => {
-					pin.removeEventListener("mouseover", onEnter);
-					pin.removeEventListener("mouseleave", onLeave);
+					pin.removeEventListener("mouseover", onPinEnter);
+					pin.removeEventListener("mouseleave", onPinLeave);
+				});
+			});
+
+			locationCards.forEach((card) => {
+				const cardId = getLocationId(card);
+				if (!cardId) return;
+
+				card.addEventListener("mouseover", onCardEnter);
+				card.addEventListener("mouseleave", onCardLeave);
+				cleanupFns.push(() => {
+					card.removeEventListener("mouseover", onCardEnter);
+					card.removeEventListener("mouseleave", onCardLeave);
 				});
 			});
 		});
