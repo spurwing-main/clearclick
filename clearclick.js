@@ -4753,8 +4753,8 @@ function main() {
 
 			const tl = gsap.timeline({
 				scrollTrigger: {
-					trigger: section,
-					start: "top 90%",
+					trigger: stats[0],
+					start: "bottom bottom",
 					toggleActions: "play none none none",
 				},
 			});
