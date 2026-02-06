@@ -4405,6 +4405,133 @@ function main() {
 		});
 	}
 
+	function c_locations() {
+		function getLocationId(el) {
+			if (!el) return null;
+			return (
+				el.dataset?.locationId ||
+				el.getAttribute?.("data-location-id") ||
+				el.dataset?.location ||
+				el.getAttribute?.("data-location") ||
+				null
+			);
+		}
+
+		// for each instance of .c-locations on page
+		// get all .globe-pin elements, and for each get data-pos-left and data-pos-top
+		// get .locations_globe element
+		// move all pins to within globe dom element, and position them according to their data attributes (which are percentages), and set display block to all pins
+		const locationSections = Array.from(document.querySelectorAll(".c-locations"));
+		if (!locationSections.length) return;
+
+		locationSections.forEach((section) => {
+			// Safe re-init (page transitions / rerenders)
+			if (section._ccLocationsCleanup && typeof section._ccLocationsCleanup === "function") {
+				try {
+					section._ccLocationsCleanup();
+				} catch (e) {}
+			}
+			section._ccLocationsCleanup = null;
+
+			const pins = Array.from(section.querySelectorAll(".globe_pin"));
+			const locationCards = Array.from(section.querySelectorAll(".location-card"));
+			const globe = section.querySelector(".locations_globe");
+			if (!globe) return;
+
+			const DIM_OPACITY = 0.35;
+			const FADE_DUR = 0.22;
+
+			const dimOtherCards = (activeId) => {
+				if (!activeId || !locationCards.length) return;
+				locationCards.forEach((card) => {
+					const cardId = getLocationId(card);
+					if (!cardId) return;
+					const title = card.querySelector(".location-card_title");
+					const body = card.querySelector(".location-card_address");
+					gsap.to([title, body], {
+						opacity: cardId === activeId ? 1 : DIM_OPACITY,
+						duration: FADE_DUR,
+						ease: "power1.out",
+						overwrite: "auto",
+					});
+				});
+			};
+
+			const resetCards = () => {
+				if (!locationCards.length) return;
+
+				const titles = [];
+				const addresses = [];
+
+				locationCards.forEach((card) => {
+					const title = card.querySelector(".location-card_title");
+					const address = card.querySelector(".location-card_address");
+					if (title) titles.push(title);
+					if (address) addresses.push(address);
+				});
+
+				// Animate titles to full opacity
+				if (titles.length) {
+					gsap.to(titles, {
+						opacity: 1,
+						duration: FADE_DUR,
+						ease: "power1.out",
+						overwrite: "auto",
+					});
+				}
+
+				// Animate addresses to 0.7 opacity
+				if (addresses.length) {
+					gsap.to(addresses, {
+						opacity: 0.7,
+						duration: FADE_DUR,
+						ease: "power1.out",
+						overwrite: "auto",
+					});
+				}
+			};
+
+			const cleanupFns = [];
+			section._ccLocationsCleanup = () => {
+				cleanupFns.forEach((fn) => {
+					try {
+						fn();
+					} catch (e) {}
+				});
+				cleanupFns.length = 0;
+			};
+
+			pins.forEach((pin) => {
+				const left = pin.dataset.posLeft;
+				const top = pin.dataset.posTop;
+				if (left == null || top == null) return;
+
+				gsap.set(pin, {
+					position: "absolute",
+					left: `${left}%`,
+					top: `${top}%`,
+					display: "block",
+				});
+				globe.appendChild(pin);
+
+				const activeId = getLocationId(pin);
+				if (!activeId) return;
+
+				const onEnter = () => dimOtherCards(activeId);
+				const onLeave = () => resetCards();
+
+				pin.addEventListener("mouseover", onEnter);
+				pin.addEventListener("pointerleave", onLeave);
+				pin.addEventListener("focus", onEnter);
+				pin.addEventListener("mouseleave", onLeave);
+				cleanupFns.push(() => {
+					pin.removeEventListener("mouseover", onEnter);
+					pin.removeEventListener("mouseleave", onLeave);
+				});
+			});
+		});
+	}
+
 	function c_colStats() {
 		// https://codepen.io/PointC/pen/WNrvjEy/1ecacafb5c4579ea20c360a6ac8f070c
 		const colStatsSections = gsap.utils.toArray(".c-stat-cols");
@@ -4483,10 +4610,37 @@ function main() {
 						const maskId = "col-stat-mask-side-" + stat_index + "-" + sideIndex;
 						sideSVG_mask.setAttribute("id", maskId);
 
-						// point group around line to mask
+						// Make mask region deterministic (prevents svg-vs-g masking differences)
+						try {
+							const vb = (sideSVG.getAttribute("viewBox") || "").trim().split(/\s+/).map(Number);
+							if (vb.length === 4 && vb.every((n) => Number.isFinite(n))) {
+								const [minX, minY, w, h] = vb;
+								sideSVG_mask.setAttribute("maskUnits", "userSpaceOnUse");
+								sideSVG_mask.setAttribute("maskContentUnits", "userSpaceOnUse");
+								sideSVG_mask.setAttribute("x", String(minX));
+								sideSVG_mask.setAttribute("y", String(minY));
+								sideSVG_mask.setAttribute("width", String(w));
+								sideSVG_mask.setAttribute("height", String(h));
+							}
+						} catch (e) {}
+
 						const line = sideSVG.querySelector("line");
-						const group = line?.parentElement;
-						if (group) group.setAttribute("mask", `url(#${maskId})`);
+						// Apply the mask directly to the dashed line (markup differs between is-1 and is-2)
+						// and clear any old wrapper masks if this function re-inits.
+						try {
+							sideSVG.removeAttribute("mask");
+							line?.parentElement?.removeAttribute?.("mask");
+						} catch (e) {}
+						if (line) {
+							line.setAttribute("mask", `url(#${maskId})`);
+							// Ensure the visible dashed line ends at full opacity.
+							try {
+								line.setAttribute("opacity", "1");
+								line.setAttribute("stroke-opacity", "1");
+								line.style.setProperty("opacity", "1", "important");
+								line.style.setProperty("stroke-opacity", "1", "important");
+							} catch (e) {}
+						}
 
 						sideMasks.push(sideSVG_mask);
 
@@ -4496,6 +4650,15 @@ function main() {
 							lineClone.removeAttribute("stroke-dasharray");
 							lineClone.removeAttribute("stroke-dashoffset");
 							gsap.set(lineClone, { attr: { stroke: "white" }, drawSVG: 0 });
+
+							// Ensure the mask stroke is fully opaque (avoid any CSS that dims .is-2 lines)
+							try {
+								lineClone.setAttribute("opacity", "1");
+								lineClone.setAttribute("stroke-opacity", "1");
+								lineClone.style.setProperty("opacity", "1", "important");
+								lineClone.style.setProperty("stroke-opacity", "1", "important");
+							} catch (e) {}
+
 							sideSVG_mask.appendChild(lineClone);
 							lineClones.push(lineClone);
 						}
@@ -5211,6 +5374,7 @@ function main() {
 	c_orbit();
 	c_timeline();
 	c_faq();
+	c_locations();
 
 	anim_scrollReveals();
 	anim_expandSolutionServiceTags();
