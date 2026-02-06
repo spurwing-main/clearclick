@@ -4819,58 +4819,6 @@ function main() {
 		});
 	}
 
-	// function c_faq() {
-	// 	const items = Array.from(document.querySelectorAll(".faq_item"));
-	// 	if (!items.length) return;
-
-	// 	const closeItem = (item) => {
-	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
-	// 		const svg = item.querySelector(".faq_item-svg");
-	// 		if (!bodyWrap) return;
-
-	// 		item.classList.remove("is-open");
-	// 		gsap.killTweensOf([bodyWrap, svg].filter(Boolean));
-	// 		gsap.to(bodyWrap, { height: 0, duration: 0.3, ease: "power3.inOut" });
-	// 		if (svg) gsap.to(svg, { rotate: 0, duration: 0.25, ease: "power3.out" });
-	// 	};
-
-	// 	const openItem = (item) => {
-	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
-	// 		const svg = item.querySelector(".faq_item-svg");
-	// 		if (!bodyWrap) return;
-
-	// 		items.forEach((other) => {
-	// 			if (other !== item && other.classList.contains("is-open")) closeItem(other);
-	// 		});
-
-	// 		item.classList.add("is-open");
-	// 		gsap.killTweensOf([bodyWrap, svg].filter(Boolean));
-	// 		gsap.set(bodyWrap, { overflow: "hidden" });
-	// 		gsap.to(bodyWrap, { height: "auto", duration: 0.35, ease: "power3.out" });
-	// 		if (svg) gsap.to(svg, { rotate: 45, duration: 0.25, ease: "power3.out" });
-	// 	};
-
-	// 	// Initial state
-	// 	items.forEach((item) => {
-	// 		const header = item.querySelector(".faq_item-header-wrap");
-	// 		const bodyWrap = item.querySelector(".faq_item-body-wrap");
-	// 		const svg = item.querySelector(".faq_item-svg");
-	// 		if (!header || !bodyWrap) return;
-
-	// 		item.classList.remove("is-open");
-	// 		gsap.set(bodyWrap, { height: 0, overflow: "hidden" });
-	// 		if (svg) gsap.set(svg, { rotate: 0 });
-
-	// 		header.addEventListener("click", (e) => {
-	// 			e.preventDefault();
-	// 			if (item.classList.contains("is-open")) closeItem(item);
-	// 			else openItem(item);
-	// 		});
-	// 	});
-	// }
-
-	// --------- Finsweet hook: rerun init on FS render  ----------
-
 	function c_faq() {
 		const root = document.querySelector(".c-faq");
 		if (!root) return;
@@ -5007,29 +4955,130 @@ function main() {
 	Pane switching
 	-------------------------------- */
 
+		let activeTopicId = null;
+		let switchTl = null;
+
+		const prefersReduced =
+			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+		const setPaneActiveState = (pane, isActive) => {
+			// Only the active pane should be in normal flow.
+			// Others are display:none so they don't affect height.
+			if (isActive) {
+				gsap.set(pane, {
+					display: "block",
+					position: "relative",
+					autoAlpha: 1,
+					pointerEvents: "auto",
+					clearProps: "left,right,top",
+				});
+			} else {
+				gsap.set(pane, {
+					display: "none",
+					autoAlpha: 0,
+					pointerEvents: "none",
+					clearProps: "position,left,right,top",
+				});
+			}
+		};
+
+		const measurePaneHeight = (pane) => {
+			// Assumes pane is display:block
+			// Use scrollHeight as a reliable content height measure
+			return Math.ceil(pane.scrollHeight);
+		};
+
 		const activateTopic = (topicId) => {
-			// panes
-			paneList.forEach((pane) => {
-				const active = pane.dataset.topicId === topicId;
-
-				gsap.to(pane, { autoAlpha: active ? 1 : 0, duration: 0.25, ease: "power3.out" });
-
-				if (!active) {
-					pane.querySelectorAll(".faq_item.is-open").forEach(closeItem);
-				}
-			});
-
-			// topic active states
-			topics.forEach((t) => t.classList.toggle("is-active", t.dataset.topicId === topicId));
-
-			// mobile selector label
-			if (selector) {
-				const activeTopic = topics.find((t) => t.dataset.topicId === topicId);
-				if (activeTopic) {
-					selector.innerHTML = activeTopic.outerHTML;
-				}
+			if (!topicId || topicId === activeTopicId) {
+				closeDropdown();
+				return;
 			}
 
+			const incoming = panes.get(topicId);
+			if (!incoming) return;
+
+			const outgoing = activeTopicId ? panes.get(activeTopicId) : null;
+
+			if (switchTl) {
+				switchTl.kill();
+				switchTl = null;
+			}
+
+			// UI feedback
+			topics.forEach((t) => t.classList.toggle("is-active", t.dataset.topicId === topicId));
+			if (selector) {
+				const activeTopic = topics.find((t) => t.dataset.topicId === topicId);
+				if (activeTopic) selector.innerHTML = activeTopic.outerHTML;
+			}
+
+			// First run: no animation
+			if (!outgoing) {
+				paneList.forEach((p) => setPaneActiveState(p, p === incoming));
+				activeTopicId = topicId;
+				closeDropdown();
+				return;
+			}
+
+			// Outgoing in flow and visible
+			setPaneActiveState(outgoing, true);
+			gsap.set(outgoing, { pointerEvents: "none" });
+
+			// Ghost-render incoming for measurement (not in flow)
+			gsap.set(incoming, {
+				display: "block",
+				position: "absolute",
+				left: 0,
+				right: 0,
+				top: 0,
+				autoAlpha: 0,
+				pointerEvents: "none",
+			});
+
+			const fromH = Math.ceil(paneRoot.getBoundingClientRect().height);
+			const toH = Math.ceil(incoming.getBoundingClientRect().height);
+
+			if (prefersReduced) {
+				// Swap instantly
+				setPaneActiveState(outgoing, false);
+				setPaneActiveState(incoming, true);
+				gsap.set(paneRoot, { clearProps: "height,overflow" });
+
+				outgoing.querySelectorAll(".faq_item.is-open").forEach(closeItem);
+
+				activeTopicId = topicId;
+				closeDropdown();
+				return;
+			}
+
+			gsap.set(paneRoot, { height: fromH, overflow: "hidden" });
+
+			switchTl = gsap.timeline({
+				defaults: { ease: "power3.inOut" },
+				onComplete: () => {
+					// Put incoming back in normal flow + make it the only active pane
+					setPaneActiveState(outgoing, false);
+					setPaneActiveState(incoming, true);
+
+					// Hide every other pane for safety
+					paneList.forEach((p) => {
+						if (p !== incoming) setPaneActiveState(p, false);
+					});
+
+					// Unlock height
+					gsap.set(paneRoot, { clearProps: "height,overflow" });
+
+					// Clean up outgoing accordions
+					outgoing.querySelectorAll(".faq_item.is-open").forEach(closeItem);
+
+					switchTl = null;
+				},
+			});
+
+			switchTl.to(paneRoot, { height: toH, duration: 0.35 }, 0);
+			switchTl.to(outgoing, { autoAlpha: 0, duration: 0.2 }, 0);
+			switchTl.to(incoming, { autoAlpha: 1, duration: 0.25 }, 0.05);
+
+			activeTopicId = topicId;
 			closeDropdown();
 		};
 
@@ -5147,6 +5196,8 @@ function main() {
 		/* --------------------------------
 	Initial state
 	-------------------------------- */
+
+		paneList.forEach((p) => gsap.set(p, { display: "none", autoAlpha: 0, pointerEvents: "none" }));
 
 		const firstTopicId = topics.find((t) => panes.has(t.dataset.topicId))?.dataset.topicId;
 		if (firstTopicId) activateTopic(firstTopicId);
