@@ -1275,7 +1275,7 @@ function main() {
 
 		// Desktop tall enough: scrub the sequence while CSS sticky holds the element
 		mm.add("(min-width: 992px) and (min-height: 640px)", () => {
-			gsap.set(cards, { opacity: 0 });
+			gsap.set(cards, { autoAlpha: 0 });
 
 			const tl = gsap.timeline({
 				scrollTrigger: {
@@ -1290,16 +1290,16 @@ function main() {
 			});
 
 			cards.forEach((card, i) => {
+				const bg = card.querySelector(".orbit-card_bg");
+				const inner = card.querySelector(".orbit-card_inner");
+
+				gsap.set(bg, { autoAlpha: 0 });
+				gsap.set(inner, { autoAlpha: 0 });
+
 				// Stagger card fade-ins
-				tl.to(
-					card,
-					{
-						opacity: 1,
-						duration: 1.5,
-						ease: "power2.out",
-					},
-					">",
-				);
+				tl.to(card, { autoAlpha: 1, duration: 0.01 }, ">"); // just make card participate in stacking
+				tl.to(bg, { autoAlpha: 1, duration: 1.5, ease: "power2.out" }, "<");
+				tl.to(inner, { autoAlpha: 1, y: 0, duration: 1.5, ease: "power2.out" }, "<0.05");
 
 				if (ring) {
 					tl.to(
@@ -4885,6 +4885,8 @@ function main() {
 			if (panes.has(id)) return;
 			const wrapper = t.closest?.(".w-dyn-item") || t;
 			wrapper.style.display = "none";
+			// Mark as permanently hidden (no pane) so mobile dropdown logic won't re-show it.
+			wrapper.dataset.ccFaqNoPane = "1";
 		});
 		topics.splice(0, topics.length, ...liveTopics);
 		if (!topics.length) return;
@@ -5015,6 +5017,7 @@ function main() {
 			if (!outgoing) {
 				paneList.forEach((p) => setPaneActiveState(p, p === incoming));
 				activeTopicId = topicId;
+				syncMobileDropdownHideActive();
 				closeDropdown();
 				return;
 			}
@@ -5046,6 +5049,7 @@ function main() {
 				outgoing.querySelectorAll(".faq_item.is-open").forEach(closeItem);
 
 				activeTopicId = topicId;
+				syncMobileDropdownHideActive();
 				closeDropdown();
 				return;
 			}
@@ -5079,6 +5083,7 @@ function main() {
 			switchTl.to(incoming, { autoAlpha: 1, duration: 0.25 }, 0.05);
 
 			activeTopicId = topicId;
+			syncMobileDropdownHideActive();
 			closeDropdown();
 		};
 
@@ -5093,6 +5098,52 @@ function main() {
 			if (!ddToggle || !ddContent) return false;
 			// Mobile-only behavior; desktop should always show the full list.
 			return mqMobile.matches;
+		};
+
+		// Hide the active topic from the dropdown content on mobile.
+		const getTopicWrapper = (topicEl) => topicEl?.closest?.(".w-dyn-item") || topicEl;
+
+		const restoreMobileHiddenTopicIfAny = () => {
+			topics.forEach((t) => {
+				const wrapper = getTopicWrapper(t);
+				if (!wrapper) return;
+				if (wrapper.dataset.ccFaqNoPane === "1") return;
+				if (wrapper.dataset.ccFaqHideActive !== "1") return;
+
+				const prev = wrapper.dataset.ccFaqPrevDisplay ?? "";
+				wrapper.style.display = prev;
+				delete wrapper.dataset.ccFaqHideActive;
+				delete wrapper.dataset.ccFaqPrevDisplay;
+			});
+		};
+
+		const syncMobileDropdownHideActive = () => {
+			if (!dropdownEnabled()) return;
+
+			topics.forEach((t) => {
+				const wrapper = getTopicWrapper(t);
+				if (!wrapper) return;
+				if (wrapper.dataset.ccFaqNoPane === "1") return;
+
+				const id = (t.dataset.topicId || "").trim();
+				const isActive = !!activeTopicId && id === activeTopicId;
+
+				if (isActive) {
+					if (wrapper.dataset.ccFaqHideActive !== "1") {
+						wrapper.dataset.ccFaqHideActive = "1";
+						wrapper.dataset.ccFaqPrevDisplay = wrapper.style.display ?? "";
+					}
+					wrapper.style.display = "none";
+					return;
+				}
+
+				if (wrapper.dataset.ccFaqHideActive === "1") {
+					const prev = wrapper.dataset.ccFaqPrevDisplay ?? "";
+					wrapper.style.display = prev;
+					delete wrapper.dataset.ccFaqHideActive;
+					delete wrapper.dataset.ccFaqPrevDisplay;
+				}
+			});
 		};
 
 		const openDropdown = () => {
@@ -5116,10 +5167,16 @@ function main() {
 		const closeDropdown = () => {
 			if (!dropdownEnabled()) return;
 			isOpen = false;
-			if (dd) dd.classList.remove("is-open");
 			gsap.killTweensOf(ddContent);
 			gsap.set(ddContent, { height: ddContent.offsetHeight, overflow: "hidden" });
-			gsap.to(ddContent, { height: 0, duration: 0.25, ease: "power3.inOut" });
+			gsap.to(ddContent, {
+				height: 0,
+				duration: 0.25,
+				ease: "power3.inOut",
+				onComplete: () => {
+					if (dd) dd.classList.remove("is-open");
+				},
+			});
 		};
 
 		const syncDropdownMode = () => {
@@ -5133,12 +5190,18 @@ function main() {
 				} else {
 					gsap.set(ddContent, { height: "auto", overflow: "visible" });
 				}
+
+				// Ensure the active topic is not shown in the dropdown list.
+				syncMobileDropdownHideActive();
 			} else {
 				// Desktop mode: always show full list, no inline collapsing styles
 				gsap.killTweensOf(ddContent);
 				gsap.set(ddContent, { clearProps: "height,overflow" });
 				isOpen = false;
 				if (dd) dd.classList.remove("is-open");
+
+				// Restore any topic hidden only because it was active on mobile.
+				restoreMobileHiddenTopicIfAny();
 			}
 		};
 
