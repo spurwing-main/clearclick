@@ -4754,8 +4754,9 @@ function main() {
 			const tl = gsap.timeline({
 				scrollTrigger: {
 					trigger: stats[0],
-					start: "bottom bottom",
+					start: "bottom bottom+=10%",
 					toggleActions: "play none none none",
+					markers: true,
 				},
 			});
 			stats.forEach((stat, stat_index) => {
