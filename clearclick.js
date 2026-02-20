@@ -2405,7 +2405,6 @@ function main() {
 				const offset = getMobileStartOffsetPx();
 				// Consider the inset when deciding overflow: a list that fits at x=0 may overflow at x=offset.
 				const hasOverflow = contentW + offset > viewportW + 2;
-				console.log("getBounds", { viewportW, contentW, offset, hasOverflow });
 
 				if (!hasOverflow) {
 					// Still start inset even without overflow, but lock the position.
@@ -2729,6 +2728,124 @@ function main() {
 					} catch (e) {}
 					try {
 						tabListWrap.classList.remove(CLS_OVERFLOW, CLS_OVERFLOW_LEFT, CLS_OVERFLOW_RIGHT);
+					} catch (e) {}
+				},
+			};
+		});
+	}
+
+	function c_csListFiltersDraggable() {
+		const components = Array.from(document.querySelectorAll(".cs-list_filters"));
+		if (!components.length) return;
+
+		const log = createDebugLog("csListFiltersDrag");
+
+		components.forEach((component, componentIndex) => {
+			// Safe re-init (FS renders / Webflow rerenders)
+			if (component._ccCsListFiltersDrag?.cleanup) {
+				log("cleanup prior instance", { componentIndex });
+				try {
+					component._ccCsListFiltersDrag.cleanup();
+				} catch (e) {}
+			}
+
+			const list = component.querySelector(".cs-list_filters-list");
+			if (!list) {
+				log("skip: missing .cs-list_filters-list", { componentIndex });
+				return;
+			}
+
+			let draggable = null;
+			let ro = null;
+			let rafMeasure = 0;
+			const EPS = 2; // px tolerance
+
+			function getBounds() {
+				const viewportW = component.getBoundingClientRect().width;
+				const contentW = list.scrollWidth;
+				const hasOverflow = contentW > viewportW + EPS;
+
+				if (!hasOverflow) {
+					return { minX: 0, maxX: 0, viewportW, contentW, hasOverflow };
+				}
+
+				const minX = Math.min(0, viewportW - contentW);
+				const maxX = 0;
+				return { minX, maxX, viewportW, contentW, hasOverflow };
+			}
+
+			function applyDraggableIfNeeded() {
+				const { minX, maxX, viewportW, contentW, hasOverflow } = getBounds();
+				log("measure", { componentIndex, viewportW, contentW, hasOverflow, minX, maxX });
+
+				if (!hasOverflow) {
+					if (draggable) {
+						log("draggable: kill (no overflow)", { componentIndex });
+						try {
+							draggable.kill();
+						} catch (e) {}
+						draggable = null;
+					}
+					gsap.set(list, { x: 0 });
+					return;
+				}
+
+				if (typeof Draggable === "undefined") {
+					log("draggable: missing (Draggable not loaded)", { componentIndex });
+					return;
+				}
+
+				if (!draggable) {
+					log("draggable: create", { componentIndex, minX, maxX });
+					draggable = Draggable.create(list, {
+						type: "x",
+						dragClickables: true,
+						allowNativeTouchScrolling: true,
+						bounds: { minX, maxX },
+						inertia: true,
+					})?.[0];
+				}
+
+				if (draggable) {
+					try {
+						draggable.applyBounds({ minX, maxX });
+						draggable.update();
+					} catch (e) {}
+				}
+			}
+
+			const scheduleMeasure = () => {
+				if (rafMeasure) cancelAnimationFrame(rafMeasure);
+				rafMeasure = requestAnimationFrame(() => {
+					rafMeasure = 0;
+					applyDraggableIfNeeded();
+				});
+			};
+
+			// Initial state
+			applyDraggableIfNeeded();
+
+			// React to layout/content changes that affect overflow/bounds
+			window.addEventListener("resize", scheduleMeasure);
+			window.addEventListener("load", scheduleMeasure, { once: true });
+			if (document.fonts && typeof document.fonts.ready?.then === "function") {
+				document.fonts.ready.then(scheduleMeasure).catch(() => {});
+			}
+			if (typeof ResizeObserver !== "undefined") {
+				ro = new ResizeObserver(() => scheduleMeasure());
+				try {
+					ro.observe(component);
+					ro.observe(list);
+				} catch (e) {}
+			}
+
+			component._ccCsListFiltersDrag = {
+				cleanup: () => {
+					window.removeEventListener("resize", scheduleMeasure);
+					if (rafMeasure) cancelAnimationFrame(rafMeasure);
+					ro?.disconnect?.();
+					try {
+						draggable?.kill?.();
 					} catch (e) {}
 				},
 			};
@@ -5464,6 +5581,7 @@ function main() {
 							debounce(() => {
 								c_solutionTabs();
 								c_simpleTabs();
+								c_csListFiltersDraggable();
 								anim_scrollReveals();
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
@@ -5479,6 +5597,7 @@ function main() {
 							debounce(() => {
 								c_solutionTabs();
 								c_simpleTabs();
+								c_csListFiltersDraggable();
 								anim_scrollReveals();
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
@@ -5491,6 +5610,7 @@ function main() {
 				// run once when FS list is ready
 				c_solutionTabs();
 				c_simpleTabs();
+				c_csListFiltersDraggable();
 				anim_scrollReveals();
 				c_caseStudiesSimpleCarousel();
 				c_solsCarousel();
@@ -5512,11 +5632,15 @@ function main() {
 	/* DEBUG LOGGING UTILITY */
 	// to enable, set localStorage key "ccDebug[Name]" to "1" with the following command:
 	// localStorage.setItem("ccDebug[Name]", "1");
+	// OR set the master key to enable ALL logs:
+	// localStorage.setItem("ccDebugAll", "1");
 	function createDebugLog(prefix, defaultPrefix = "clearclick") {
 		let enabled = false;
 		try {
-			enabled = localStorage.getItem(`ccDebug[${prefix}]`) === "1";
-			// console.log("[clearclick] Debug log", prefix, "enabled:", enabled);
+			// Check master key first, then specific prefix key
+			enabled =
+				localStorage.getItem("ccDebugAll") === "1" ||
+				localStorage.getItem(`ccDebug${prefix}`) === "1";
 		} catch (e) {
 			enabled = false;
 		}
@@ -5687,4 +5811,5 @@ function main() {
 	hookFinsweetRenders();
 	c_solutionTabs();
 	c_simpleTabs();
+	c_csListFiltersDraggable();
 }
