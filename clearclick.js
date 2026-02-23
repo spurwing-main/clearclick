@@ -3140,40 +3140,36 @@ function main() {
 						});
 					}
 
+					// ✅ New per-item order: 1) Line → 2) Circle → 3) Text (+ countup)
+					const tLine = 0;
+					const tCircle = line ? tLine + 0.5 * lineDur + lineToRingDelay : 0;
+					const circleDur = dashCirc && bgCirc ? ringDur : 0;
+					const tText = tCircle;
+
 					// 0) Fade-ins (bg circle + body)
+
+					// 1) Line
+					if (line) {
+						itemTl.to(
+							line,
+							{
+								[lineAxis]: 1,
+								duration: lineDur,
+								ease: "power2.out",
+								overwrite: "auto",
+							},
+							tLine,
+						);
+					}
+
+					// 2) Circle (bg fade + ring growth)
 					if (bgCirc) {
 						itemTl.to(
 							bgCirc,
 							{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0,
+							tLine,
 						);
 					}
-					if (body) {
-						itemTl.to(
-							body,
-							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0,
-						);
-					}
-					if (statEl) {
-						itemTl.to(
-							statEl,
-							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-							0,
-						);
-					}
-
-					// 1) Line
-					if (line) {
-						itemTl.to(line, {
-							[lineAxis]: 1,
-							duration: lineDur,
-							ease: "power2.out",
-							overwrite: "auto",
-						});
-					}
-
-					// 2) Ring (area-based scaling) + 3) Count-up trigger
 					if (dashCirc && bgCirc) {
 						const endRaw = parseFloat(item.getAttribute("data-stat-end-value") || "");
 						const maxRaw = parseFloat(item.getAttribute("data-stat-max-value") || "");
@@ -3190,7 +3186,7 @@ function main() {
 							const rEnd = Math.sqrt(ratio) * rMax;
 							const cyEnd = cyBg + (rMax - rEnd);
 
-							const ringStart = line ? lineToRingDelay : 0;
+							// const ringStart = line ? lineToRingDelay : 0;
 
 							log("item calc", {
 								index,
@@ -3203,23 +3199,24 @@ function main() {
 								rEnd,
 								cyBg,
 								cyEnd,
-								ringStart,
+								tCircle,
+								tText,
 							});
 
-							itemTl.call(
-								() => {
-									try {
-										item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
-									} catch (e) {}
+							// itemTl.call(
+							// 	() => {
+							// 		try {
+							// 			item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
+							// 		} catch (e) {}
 
-									helper_dispatchCountUp(item, component, {
-										durationSec: 0.5,
-										defaultDelaySec: 0,
-									});
-								},
-								[],
-								ringStart,
-							);
+							// 		helper_dispatchCountUp(item, component, {
+							// 			durationSec: 0.5,
+							// 			defaultDelaySec: 0,
+							// 		});
+							// 	},
+							// 	[],
+							// 	ringStart,
+							// );
 
 							itemTl.to(
 								dashCirc,
@@ -3229,9 +3226,39 @@ function main() {
 									ease: "power2.out",
 									overwrite: "auto",
 								},
-								ringStart,
+								tCircle,
 							);
 						}
+					}
+					// 3) Text (and fire count-up when text starts)
+
+					itemTl.call(
+						() => {
+							try {
+								item.dispatchEvent(new CustomEvent("cc:reveal", { bubbles: true }));
+							} catch (e) {}
+
+							helper_dispatchCountUp(item, component, {
+								durationSec: 0.5,
+								defaultDelaySec: 0,
+							});
+						},
+						[],
+						tText,
+					);
+					if (body) {
+						itemTl.to(
+							body,
+							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							tText,
+						);
+					}
+					if (statEl) {
+						itemTl.to(
+							statEl,
+							{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
+							tText,
+						);
 					}
 
 					// Stagger per-item timelines so each item runs line -> ring -> countup as a unit.
@@ -3317,6 +3344,11 @@ function main() {
 				const itemTl = gsap.timeline({ paused: true });
 				const statEl = item.querySelector(".circle-stat_stat");
 
+				const tLine = 0;
+				const tCircle = line ? tLine + 0.5 * lineDur + lineToRingDelay : 0;
+				const circleDur = dashCirc && bgCirc ? ringDur : 0;
+				const tText = tCircle;
+
 				if (log.enabled && (!dashCirc || !bgCirc)) {
 					log("missing circles", {
 						index,
@@ -3331,32 +3363,36 @@ function main() {
 					itemTl.to(
 						bgCirc,
 						{ opacity: 1, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0,
+						tLine,
 					);
 				}
 				if (body) {
 					itemTl.to(
 						body,
 						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0,
+						tText,
 					);
 				}
 				if (statEl) {
 					itemTl.to(
 						statEl,
 						{ autoAlpha: 1, y: 0, duration: fadeDur, ease: "power1.out", overwrite: "auto" },
-						0,
+						tText,
 					);
 				}
 
 				// 1) Line
 				if (line) {
-					itemTl.to(line, {
-						[lineAxis]: 1,
-						duration: lineDur,
-						ease: "power2.out",
-						overwrite: "auto",
-					});
+					itemTl.to(
+						line,
+						{
+							[lineAxis]: 1,
+							duration: lineDur,
+							ease: "power2.out",
+							overwrite: "auto",
+						},
+						tLine,
+					);
 				}
 
 				// 2) Ring (area-based scaling) + 3) Count-up trigger
@@ -3376,7 +3412,7 @@ function main() {
 						const rEnd = Math.sqrt(ratio) * rMax;
 						const cyEnd = cyBg + (rMax - rEnd);
 
-						const ringStart = line ? lineToRingDelay : 0;
+						// const ringStart = line ? lineToRingDelay : 0;
 
 						log("item calc", {
 							index,
@@ -3389,7 +3425,7 @@ function main() {
 							rEnd,
 							cyBg,
 							cyEnd,
-							ringStart,
+							// ringStart,
 						});
 
 						itemTl.call(
@@ -3404,7 +3440,7 @@ function main() {
 								});
 							},
 							[],
-							ringStart,
+							tText,
 						);
 
 						itemTl.to(
@@ -3415,7 +3451,7 @@ function main() {
 								ease: "power2.out",
 								overwrite: "auto",
 							},
-							ringStart,
+							tText,
 						);
 					}
 				}
