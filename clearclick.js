@@ -3758,8 +3758,8 @@ function main() {
 
 				// Closed baseline
 				gsap.set(list, { display: "none" });
-				gsap.set(mmPanel, { backgroundColor: "transparent" });
-				if (links.length) gsap.set(links, { autoAlpha: 0 });
+				gsap.set(mmPanel, { autoAlpha: 0, y: -10 });
+				// if (links.length) gsap.set(links, { autoAlpha: 0 });
 
 				const tl = gsap.timeline({
 					paused: true,
@@ -3771,22 +3771,23 @@ function main() {
 				tl.to(
 					mmPanel,
 					{
-						backgroundColor: "#ffffff",
-						duration: 0.29,
+						autoAlpha: 1,
+						y: 0,
+						duration: 0.3,
 					},
 					0.01,
 				);
-				if (links.length) {
-					tl.to(
-						links,
-						{
-							autoAlpha: 1,
-							duration: 0.2,
-							stagger: 0.05,
-						},
-						0.05,
-					);
-				}
+				// if (links.length) {
+				// 	tl.to(
+				// 		links,
+				// 		{
+				// 			autoAlpha: 1,
+				// 			duration: 0.2,
+				// 			// stagger: 0.05,
+				// 		},
+				// 		0.01,
+				// 	);
+				// }
 
 				dd._ccNavDd = {
 					tl,
