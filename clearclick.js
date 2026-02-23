@@ -371,6 +371,87 @@ function main() {
 			let embla = null;
 			let lastSelected = 0; // ✅ shared by syncLines + onIndexChange + reInit
 
+			// Add/remove overflow classes as soon as the carousel moves.
+			// Threshold is in *pixels* so you can avoid flicker on tiny offsets.
+			const CLS_OVERFLOW_LEFT = "has-overflow-left";
+			const CLS_OVERFLOW_RIGHT = "has-overflow-right";
+			const OVERFLOW_THRESHOLD_PX = 5;
+
+			function readTranslateX(el) {
+				if (!el) return 0;
+				let transform = "";
+				try {
+					const cs = window.getComputedStyle(el);
+					transform = cs.transform || cs.webkitTransform || "";
+				} catch (e) {
+					transform = "";
+				}
+
+				if (!transform || transform === "none") return 0;
+
+				// matrix(a,b,c,d,tx,ty)
+				if (transform.startsWith("matrix(")) {
+					const raw = transform.slice(7, -1).split(",");
+					const tx = parseFloat(raw[4]);
+					return Number.isFinite(tx) ? tx : 0;
+				}
+
+				// matrix3d(..., tx, ty, tz)
+				if (transform.startsWith("matrix3d(")) {
+					const raw = transform.slice(9, -1).split(",");
+					const tx = parseFloat(raw[12]);
+					return Number.isFinite(tx) ? tx : 0;
+				}
+
+				return 0;
+			}
+
+			function getEmblaProgress(api) {
+				if (!api) return null;
+				try {
+					if (typeof api.scrollProgress === "function") {
+						const p = api.scrollProgress();
+						return Number.isFinite(p) ? p : null;
+					}
+				} catch (e) {}
+				return null;
+			}
+
+			function syncOverflowClasses() {
+				if (!embla) return;
+
+				const container =
+					embla && typeof embla.containerNode === "function" ? embla.containerNode() : null;
+				const viewportWidth = viewport?.clientWidth || 0;
+				const contentWidth = container?.scrollWidth || 0;
+				const maxScrollPx = Math.max(0, contentWidth - viewportWidth);
+
+				if (maxScrollPx < 1) {
+					component.classList.remove(CLS_OVERFLOW_LEFT, CLS_OVERFLOW_RIGHT);
+					return;
+				}
+
+				// Embla moves the container with transforms. We read translateX for live px offsets.
+				// Typical LTR: translateX goes negative as you scroll forward.
+				const tx = readTranslateX(container);
+				let fromStartPx = Math.max(0, -tx);
+
+				// Fallback if transform parsing fails.
+				if (!Number.isFinite(fromStartPx)) {
+					const p = getEmblaProgress(embla) || 0;
+					fromStartPx = p * maxScrollPx;
+				}
+
+				fromStartPx = Math.max(0, Math.min(maxScrollPx, fromStartPx));
+				const remainingPx = Math.max(0, maxScrollPx - fromStartPx);
+
+				const hasLeft = fromStartPx >= OVERFLOW_THRESHOLD_PX;
+				const hasRight = remainingPx >= OVERFLOW_THRESHOLD_PX;
+
+				component.classList.toggle(CLS_OVERFLOW_LEFT, hasLeft);
+				component.classList.toggle(CLS_OVERFLOW_RIGHT, hasRight);
+			}
+
 			function setArrowsEnabled() {
 				if (!embla) return;
 
@@ -479,6 +560,7 @@ function main() {
 
 				embla.on("init", () => {
 					setArrowsEnabled();
+					syncOverflowClasses();
 					// Initial state:
 					// - slides before active: filled
 					// - active: filled (no animation on load)
@@ -488,10 +570,14 @@ function main() {
 
 				embla.on("reInit", () => {
 					setArrowsEnabled();
-					// Re-sync without replaying everything
+					syncOverflowClasses();
 					lastSelected = embla.selectedScrollSnap() || 0;
 					syncLines({ animateActive: false, animateReverse: false });
 				});
+
+				embla.on("scroll", syncOverflowClasses);
+				embla.on("select", syncOverflowClasses);
+				embla.on("settle", syncOverflowClasses);
 
 				const onIndexChange = () => {
 					if (!embla) return;
@@ -520,6 +606,7 @@ function main() {
 
 				// In case init events fire before we attach handlers
 				setArrowsEnabled();
+				syncOverflowClasses();
 				syncLines({ animateActive: false, animateReverse: false });
 			}
 
