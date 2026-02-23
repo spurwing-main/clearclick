@@ -5979,6 +5979,9 @@ function main() {
 		const rings = rings_getRingsFromSvg(svg);
 		if (!rings) return;
 
+		const prefersReduced =
+			window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 		// Match buildPanelTimeline ring feel
 		tl.to(
 			[rings.ringC, rings.ringB, rings.ringA],
@@ -5992,6 +5995,23 @@ function main() {
 			},
 			position,
 		);
+
+		// Gentle “tail” growth on the outer ring (A) after the main reveal.
+		// Keep subtle to avoid visible pulsing; skip for reduced motion.
+		if (!prefersReduced) {
+			tl.to(
+				rings.ringA,
+				{
+					scale: 1.25,
+					duration: 5,
+					ease: "power1.inOut",
+					overwrite: "auto",
+					yoyo: true,
+					repeat: 2,
+				},
+				">-0.1",
+			);
+		}
 	}
 
 	/* general catch for GSAP */
