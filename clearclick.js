@@ -41,6 +41,109 @@ function main() {
 		return dir === "prev" ? selected > 0 : selected < count - 1;
 	}
 
+	function _ccReadTranslateX(el) {
+		if (!el) return 0;
+		let transform = "";
+		try {
+			const cs = window.getComputedStyle(el);
+			transform = cs.transform || cs.webkitTransform || "";
+		} catch (e) {
+			transform = "";
+		}
+
+		if (!transform || transform === "none") return 0;
+
+		// matrix(a,b,c,d,tx,ty)
+		if (transform.startsWith("matrix(")) {
+			const raw = transform.slice(7, -1).split(",");
+			const tx = parseFloat(raw[4]);
+			return Number.isFinite(tx) ? tx : 0;
+		}
+
+		// matrix3d(..., tx, ty, tz)
+		if (transform.startsWith("matrix3d(")) {
+			const raw = transform.slice(9, -1).split(",");
+			const tx = parseFloat(raw[12]);
+			return Number.isFinite(tx) ? tx : 0;
+		}
+
+		return 0;
+	}
+
+	function _ccGetEmblaProgress(api) {
+		if (!api) return null;
+		try {
+			if (typeof api.scrollProgress === "function") {
+				const p = api.scrollProgress();
+				return Number.isFinite(p) ? p : null;
+			}
+		} catch (e) {}
+		return null;
+	}
+
+	function _ccIsEmblaLooping(api) {
+		if (!api) return null;
+		try {
+			const eng = typeof api.internalEngine === "function" ? api.internalEngine() : null;
+			const loop = eng?.options?.loop;
+			return typeof loop === "boolean" ? loop : null;
+		} catch (e) {}
+		return null;
+	}
+
+	function _ccSyncEmblaOverflowClasses({
+		rootEl,
+		viewportEl,
+		emblaApi,
+		thresholdPx = 5,
+		clsLeft = "has-overflow-left",
+		clsRight = "has-overflow-right",
+	} = {}) {
+		if (!rootEl) return;
+		if (!emblaApi || !viewportEl) {
+			rootEl.classList.remove(clsLeft, clsRight);
+			return;
+		}
+
+		const container =
+			emblaApi && typeof emblaApi.containerNode === "function" ? emblaApi.containerNode() : null;
+		const viewportWidth = viewportEl?.clientWidth || 0;
+		const contentWidth = container?.scrollWidth || 0;
+		const maxScrollPx = Math.max(0, contentWidth - viewportWidth);
+
+		if (maxScrollPx < 1) {
+			rootEl.classList.remove(clsLeft, clsRight);
+			return;
+		}
+
+		const isLoop = _ccIsEmblaLooping(emblaApi);
+		if (isLoop === true) {
+			// In loop mode there is always content on both sides when the carousel overflows.
+			rootEl.classList.add(clsLeft, clsRight);
+			return;
+		}
+
+		// Embla moves the container with transforms. We read translateX for live px offsets.
+		// Typical LTR: translateX goes negative as you scroll forward.
+		const tx = _ccReadTranslateX(container);
+		let fromStartPx = Math.max(0, -tx);
+
+		// Fallback if transform parsing fails.
+		if (!Number.isFinite(fromStartPx)) {
+			const p = _ccGetEmblaProgress(emblaApi) || 0;
+			fromStartPx = p * maxScrollPx;
+		}
+
+		fromStartPx = Math.max(0, Math.min(maxScrollPx, fromStartPx));
+		const remainingPx = Math.max(0, maxScrollPx - fromStartPx);
+
+		const hasLeft = fromStartPx >= thresholdPx;
+		const hasRight = remainingPx >= thresholdPx;
+
+		rootEl.classList.toggle(clsLeft, hasLeft);
+		rootEl.classList.toggle(clsRight, hasRight);
+	}
+
 	function anim_homeHeroCorners() {
 		const hero = document.querySelector(".c-home-hero");
 		if (!hero) return;
@@ -377,79 +480,15 @@ function main() {
 			const CLS_OVERFLOW_RIGHT = "has-overflow-right";
 			const OVERFLOW_THRESHOLD_PX = 5;
 
-			function readTranslateX(el) {
-				if (!el) return 0;
-				let transform = "";
-				try {
-					const cs = window.getComputedStyle(el);
-					transform = cs.transform || cs.webkitTransform || "";
-				} catch (e) {
-					transform = "";
-				}
-
-				if (!transform || transform === "none") return 0;
-
-				// matrix(a,b,c,d,tx,ty)
-				if (transform.startsWith("matrix(")) {
-					const raw = transform.slice(7, -1).split(",");
-					const tx = parseFloat(raw[4]);
-					return Number.isFinite(tx) ? tx : 0;
-				}
-
-				// matrix3d(..., tx, ty, tz)
-				if (transform.startsWith("matrix3d(")) {
-					const raw = transform.slice(9, -1).split(",");
-					const tx = parseFloat(raw[12]);
-					return Number.isFinite(tx) ? tx : 0;
-				}
-
-				return 0;
-			}
-
-			function getEmblaProgress(api) {
-				if (!api) return null;
-				try {
-					if (typeof api.scrollProgress === "function") {
-						const p = api.scrollProgress();
-						return Number.isFinite(p) ? p : null;
-					}
-				} catch (e) {}
-				return null;
-			}
-
 			function syncOverflowClasses() {
-				if (!embla) return;
-
-				const container =
-					embla && typeof embla.containerNode === "function" ? embla.containerNode() : null;
-				const viewportWidth = viewport?.clientWidth || 0;
-				const contentWidth = container?.scrollWidth || 0;
-				const maxScrollPx = Math.max(0, contentWidth - viewportWidth);
-
-				if (maxScrollPx < 1) {
-					component.classList.remove(CLS_OVERFLOW_LEFT, CLS_OVERFLOW_RIGHT);
-					return;
-				}
-
-				// Embla moves the container with transforms. We read translateX for live px offsets.
-				// Typical LTR: translateX goes negative as you scroll forward.
-				const tx = readTranslateX(container);
-				let fromStartPx = Math.max(0, -tx);
-
-				// Fallback if transform parsing fails.
-				if (!Number.isFinite(fromStartPx)) {
-					const p = getEmblaProgress(embla) || 0;
-					fromStartPx = p * maxScrollPx;
-				}
-
-				fromStartPx = Math.max(0, Math.min(maxScrollPx, fromStartPx));
-				const remainingPx = Math.max(0, maxScrollPx - fromStartPx);
-
-				const hasLeft = fromStartPx >= OVERFLOW_THRESHOLD_PX;
-				const hasRight = remainingPx >= OVERFLOW_THRESHOLD_PX;
-
-				component.classList.toggle(CLS_OVERFLOW_LEFT, hasLeft);
-				component.classList.toggle(CLS_OVERFLOW_RIGHT, hasRight);
+				_ccSyncEmblaOverflowClasses({
+					rootEl: component,
+					viewportEl: viewport,
+					emblaApi: embla,
+					thresholdPx: OVERFLOW_THRESHOLD_PX,
+					clsLeft: CLS_OVERFLOW_LEFT,
+					clsRight: CLS_OVERFLOW_RIGHT,
+				});
 			}
 
 			function setArrowsEnabled() {
@@ -1236,6 +1275,10 @@ function main() {
 			const viewport = component.querySelector(".sols-carousel_list-wrap.embla");
 			if (!viewport) return;
 
+			const CLS_OVERFLOW_LEFT = "has-overflow-left";
+			const CLS_OVERFLOW_RIGHT = "has-overflow-right";
+			const OVERFLOW_THRESHOLD_PX = 5;
+
 			// Safe re-init (CMS rerenders)
 			if (component._ccSolsEmbla) {
 				try {
@@ -1248,8 +1291,13 @@ function main() {
 				component._ccSolsAbort = null;
 			}
 
-			const prevBtn = component.querySelector(".sols-carousel_controls .controls-arrow.is-prev");
-			const nextBtn = component.querySelector(".sols-carousel_controls .controls-arrow.is-next");
+			// Support multiple arrow instances (e.g. duplicated controls for different breakpoints)
+			const prevBtns = Array.from(
+				component.querySelectorAll(".sols-carousel_controls .controls-arrow.is-prev"),
+			);
+			const nextBtns = Array.from(
+				component.querySelectorAll(".sols-carousel_controls .controls-arrow.is-next"),
+			);
 
 			const embla = EmblaCarousel(viewport, OPTIONS);
 			component._ccSolsEmbla = embla;
@@ -1257,41 +1305,63 @@ function main() {
 			const abort = new AbortController();
 			component._ccSolsAbort = abort;
 
+			function syncOverflowClasses() {
+				_ccSyncEmblaOverflowClasses({
+					rootEl: component,
+					viewportEl: viewport,
+					emblaApi: embla,
+					thresholdPx: OVERFLOW_THRESHOLD_PX,
+					clsLeft: CLS_OVERFLOW_LEFT,
+					clsRight: CLS_OVERFLOW_RIGHT,
+				});
+			}
+
 			function setArrowsEnabled() {
 				if (!embla) return;
 				const canPrev = emblaCanScroll(embla, "prev");
 				const canNext = emblaCanScroll(embla, "next");
 
-				if (prevBtn) prevBtn.disabled = !canPrev;
-				if (nextBtn) nextBtn.disabled = !canNext;
-
-				if (prevBtn) prevBtn.classList.toggle("is-disabled", !canPrev);
-				if (nextBtn) nextBtn.classList.toggle("is-disabled", !canNext);
+				// Sync all button instances
+				prevBtns.forEach((btn) => {
+					btn.disabled = !canPrev;
+					btn.classList.toggle("is-disabled", !canPrev);
+				});
+				nextBtns.forEach((btn) => {
+					btn.disabled = !canNext;
+					btn.classList.toggle("is-disabled", !canNext);
+				});
 			}
 
-			if (prevBtn) {
-				prevBtn.addEventListener(
+			prevBtns.forEach((btn) => {
+				btn.addEventListener(
 					"click",
 					() => {
 						embla.scrollPrev();
 					},
 					{ signal: abort.signal },
 				);
-			}
-			if (nextBtn) {
-				nextBtn.addEventListener(
+			});
+			nextBtns.forEach((btn) => {
+				btn.addEventListener(
 					"click",
 					() => {
 						embla.scrollNext();
 					},
 					{ signal: abort.signal },
 				);
-			}
+			});
 
 			embla.on("init", setArrowsEnabled);
 			embla.on("reInit", setArrowsEnabled);
 			embla.on("select", setArrowsEnabled);
 			setArrowsEnabled();
+
+			embla.on("init", syncOverflowClasses);
+			embla.on("reInit", syncOverflowClasses);
+			embla.on("scroll", syncOverflowClasses);
+			embla.on("select", syncOverflowClasses);
+			embla.on("settle", syncOverflowClasses);
+			syncOverflowClasses();
 
 			// Service list expansion changes slide heights; refresh Embla after the expand animation.
 			component.addEventListener(
