@@ -4114,6 +4114,33 @@ function main() {
 			const tags = getTags(tagsList);
 			const tagsCount = tags.length;
 
+			// Decide desired state up-front (respect user intent)
+			const shouldExpand = !!card._ccServicesUserExpanded || !!card._tagsExpanded;
+
+			// --- Dirty check ---
+			// FS/Nest and Webflow can trigger multiple mutation batches; repeatedly setting
+			// display on many elements can cause visible scroll jumps via layout shift.
+			// Only apply when something materially changed.
+			if (!card._ccServicesApplied) {
+				card._ccServicesApplied = {
+					tagsCount: null,
+					expanded: null,
+					tagsListEl: null,
+					moreBtnEl: null,
+				};
+			}
+			const applied = card._ccServicesApplied;
+			const unchanged =
+				applied.tagsCount === tagsCount &&
+				applied.expanded === shouldExpand &&
+				applied.tagsListEl === tagsList &&
+				applied.moreBtnEl === moreBtn;
+			if (unchanged) return;
+			applied.tagsCount = tagsCount;
+			applied.expanded = shouldExpand;
+			applied.tagsListEl = tagsList;
+			applied.moreBtnEl = moreBtn;
+
 			// Store original displays up-front
 			tags.forEach((t) => storeDisplay(t, "inline-flex"));
 			storeDisplay(moreBtn, "inline-flex");
@@ -4136,16 +4163,17 @@ function main() {
 				card._tagsExpanded = false;
 			}
 
-			// If there are no tags yet, we're likely waiting on FS/Nest; keep things tidy.
+			// If there are no tags yet, we're likely waiting on FS/Nest; avoid thrashing.
+			// (MutationObserver / delayed resync will pick up injected tags.)
 			if (!tagsCount) {
-				tags.forEach(showEl);
 				hideEl(moreBtn);
 				card._tagsExpanded = false;
+				applied.expanded = false;
 				return;
 			}
 
 			// Respect explicit user expansion; otherwise enforce default collapsed state.
-			if (card._ccServicesUserExpanded || card._tagsExpanded) expandCard(card, { animate });
+			if (shouldExpand) expandCard(card, { animate });
 			else collapseCard(card);
 		}
 
@@ -4288,7 +4316,14 @@ function main() {
 		}
 
 		// Bind + initial sync
-		solCards.forEach((card) => syncCard(card, { animate: false }));
+		let sawEmptyTags = false;
+		solCards.forEach((card) => {
+			const tagsList = getTagsList(card);
+			if (!tagsList) return;
+			const tagsCount = getTags(tagsList).length;
+			if (!tagsCount) sawEmptyTags = true;
+			syncCard(card, { animate: false });
+		});
 
 		// --- Resize handling (debounced) ---
 		if (anim_expandSolutionServiceTags._onResize) {
@@ -4373,12 +4408,9 @@ function main() {
 			} catch (e) {}
 		}
 
-		// Extra safety: a couple of delayed syncs for late hydration without obvious mutations.
-		anim_expandSolutionServiceTags._syncTimers = [
-			setTimeout(resyncAll, 0),
-			setTimeout(resyncAll, 250),
-			setTimeout(resyncAll, 1000),
-		];
+		// Extra safety: one delayed sync for late hydration without obvious mutations.
+		// Only schedule if we saw empty tag lists on initial load.
+		anim_expandSolutionServiceTags._syncTimers = sawEmptyTags ? [setTimeout(resyncAll, 250)] : [];
 	}
 
 	function c_solutionStackMbl() {
