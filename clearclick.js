@@ -2286,20 +2286,51 @@ function main() {
 					return height;
 				};
 
+				const measureHeightHidden = (panel) => {
+					if (!panel) return 0;
+
+					// Save current inline styles so we can restore exactly.
+					const prev = {
+						display: panel.style.display,
+						position: panel.style.position,
+						left: panel.style.left,
+						top: panel.style.top,
+						right: panel.style.right,
+						visibility: panel.style.visibility,
+					};
+
+					// Some layouts/styles depend on .is-active. Ensure we measure in that state.
+					const wasActive = panel.classList.contains("is-active");
+					panel.classList.add("is-active");
+
+					// Make measurable but not visible/in-flow.
+					gsap.set(panel, {
+						position: "absolute",
+						left: 0,
+						top: 0,
+						right: 0,
+						visibility: "hidden",
+						display: "block",
+					});
+					const h = measureHeight(panel);
+
+					// Restore inline styles (avoids `clearProps` accidentally unhiding panels).
+					panel.style.display = prev.display;
+					panel.style.position = prev.position;
+					panel.style.left = prev.left;
+					panel.style.top = prev.top;
+					panel.style.right = prev.right;
+					panel.style.visibility = prev.visibility;
+
+					if (!wasActive) panel.classList.remove("is-active");
+					return h;
+				};
+
 				// Stop any in-flight panel animation on the outgoing panel
 				fromPanel?._tl?.kill?.();
 
-				// get height of toPanel. We do this by making it absolutely positioned temporarily.
-				gsap.set(toPanel, {
-					position: "absolute",
-					left: 0,
-					top: 0,
-					right: 0,
-					visibility: "hidden",
-					display: "block",
-				});
-				const toPanelH = measureHeight(toPanel);
-				gsap.set(toPanel, { clearProps: "position,visibility,display,left,right,top" });
+				// get height of toPanel without accidentally unhiding it in-flow
+				const toPanelH = measureHeightHidden(toPanel);
 
 				// and measure height of fromPanel
 				const fromPanelH = measureHeight(fromPanel);
