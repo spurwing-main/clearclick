@@ -4602,7 +4602,6 @@ function main() {
 			c_solutionStackMbl_v2._mm = null;
 		}
 
-		// Kill any leftover triggers from previous runs (FS rerenders / multiple inits)
 		try {
 			ScrollTrigger.getAll().forEach((st) => {
 				if (st?.vars?.id && String(st.vars.id).startsWith("ccSolStackV2_")) st.kill();
@@ -4615,7 +4614,6 @@ function main() {
 		mm.add("(max-width: 767px)", () => {
 			const items = Array.from(document.querySelectorAll(".sol-listing_list-item"));
 			const container = items[0]?.parentElement;
-
 			if (!container) return;
 			if (items.length < 2) return;
 
@@ -4623,17 +4621,31 @@ function main() {
 			const getScrollY = () => window.pageYOffset || document.documentElement.scrollTop || 0;
 			const absBottom = (el) => getScrollY() + el.getBoundingClientRect().bottom;
 
+			const measureItemHeights = () => {
+				// Ensure parents keep space even when child is pinned (pinSpacing:false)
+				for (const item of items) {
+					const wrap = item.querySelector(".sol-card_wrap");
+					if (!wrap) continue;
+					const h = wrap.getBoundingClientRect().height || wrap.offsetHeight || 0;
+					if (h > 0) item.style.minHeight = `${Math.ceil(h)}px`;
+				}
+			};
+
 			const getSharedEndScrollY = () => {
 				const penultimateItem = items[items.length - 2];
 				const penultimateH = penultimateItem
 					? penultimateItem.getBoundingClientRect().height || penultimateItem.offsetHeight || 0
 					: 0;
-
-				// End when container bottom hits bottom of penultimate card while pinned at top 20px
 				return absBottom(container) - (PIN_TOP + penultimateH);
 			};
 
 			const tweens = [];
+
+			// Keep heights correct on any refresh (resize, tag expand -> refresh, FS rerenders, etc.)
+			ScrollTrigger.addEventListener("refreshInit", measureItemHeights);
+
+			// Initial measure BEFORE creating pins (important when loading mid-scroll)
+			measureItemHeights();
 
 			items.forEach((item, index) => {
 				const isLast = index === items.length - 1;
@@ -4643,15 +4655,14 @@ function main() {
 				const card = item.querySelector(".sol-card");
 				if (!card || !cardWrap) return;
 
-				// Pin + scale (all share the same end)
 				const pinTween = gsap.to(card, {
 					scale: 1,
 					ease: "none",
 					scrollTrigger: {
 						id: `ccSolStackV2_pin_${index}`,
-						trigger: item, // ✅ explicit trigger (don't rely on defaults)
+						trigger: item,
 						start: `top ${PIN_TOP}px`,
-						end: () => getSharedEndScrollY(), // absolute scrollY
+						end: () => getSharedEndScrollY(),
 						invalidateOnRefresh: true,
 						pin: cardWrap,
 						pinSpacing: false,
@@ -4660,7 +4671,6 @@ function main() {
 				});
 				tweens.push(pinTween);
 
-				// Fade (must recompute when card height changes)
 				const getCardH = () => card.getBoundingClientRect().height || card.offsetHeight || 0;
 
 				const fadeTween = gsap.to(card, {
@@ -4678,15 +4688,22 @@ function main() {
 				tweens.push(fadeTween);
 			});
 
-			// One refresh once the triggers exist and layout has settled a frame
+			// Refresh after a frame (and once more shortly after) to catch late layout shifts
 			requestAnimationFrame(() => {
 				try {
 					ScrollTrigger.refresh();
 				} catch (e) {}
+				setTimeout(() => {
+					try {
+						ScrollTrigger.refresh();
+					} catch (e) {}
+				}, 150);
 			});
 
-			// Cleanup when leaving mq or on mm.kill()
 			return () => {
+				ScrollTrigger.removeEventListener("refreshInit", measureItemHeights);
+				for (const item of items) item.style.minHeight = "";
+
 				tweens.forEach((t) => {
 					try {
 						t?.scrollTrigger?.kill?.();
