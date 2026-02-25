@@ -4594,74 +4594,107 @@ function main() {
 	}
 
 	function c_solutionStackMbl_v2() {
-		const items = document.querySelectorAll(".sol-listing_list-item");
-		const container = items[0]?.parentElement;
+		// --- SAFE RE-INIT ---
+		if (c_solutionStackMbl_v2._mm) {
+			try {
+				c_solutionStackMbl_v2._mm.kill();
+			} catch (e) {}
+			c_solutionStackMbl_v2._mm = null;
+		}
 
-		if (!container) return;
-		if (items.length < 2) return;
+		// Kill any leftover triggers from previous runs (FS rerenders / multiple inits)
+		try {
+			ScrollTrigger.getAll().forEach((st) => {
+				if (st?.vars?.id && String(st.vars.id).startsWith("ccSolStackV2_")) st.kill();
+			});
+		} catch (e) {}
 
-		let mm = gsap.matchMedia();
+		const mm = gsap.matchMedia();
+		c_solutionStackMbl_v2._mm = mm;
 
 		mm.add("(max-width: 767px)", () => {
-			// Shared end point for all cards:
-			// When the container bottom (== bottom of final card, no padding) reaches the
-			// bottom of the penultimate card while it's pinned at `top 20px`.
+			const items = Array.from(document.querySelectorAll(".sol-listing_list-item"));
+			const container = items[0]?.parentElement;
+
+			if (!container) return;
+			if (items.length < 2) return;
+
 			const PIN_TOP = 20;
 			const getScrollY = () => window.pageYOffset || document.documentElement.scrollTop || 0;
 			const absBottom = (el) => getScrollY() + el.getBoundingClientRect().bottom;
+
 			const getSharedEndScrollY = () => {
 				const penultimateItem = items[items.length - 2];
 				const penultimateH = penultimateItem
 					? penultimateItem.getBoundingClientRect().height || penultimateItem.offsetHeight || 0
 					: 0;
+
+				// End when container bottom hits bottom of penultimate card while pinned at top 20px
 				return absBottom(container) - (PIN_TOP + penultimateH);
 			};
 
+			const tweens = [];
+
 			items.forEach((item, index) => {
 				const isLast = index === items.length - 1;
+				if (isLast) return;
+
 				const cardWrap = item.querySelector(".sol-card_wrap");
 				const card = item.querySelector(".sol-card");
+				if (!card || !cardWrap) return;
 
-				console.log(`Setting up scroll animation for item ${index + 1}/${items.length}`, {
-					item,
-					cardWrap,
-					card,
-					isLast,
+				// Pin + scale (all share the same end)
+				const pinTween = gsap.to(card, {
+					scale: 1,
+					ease: "none",
+					scrollTrigger: {
+						id: `ccSolStackV2_pin_${index}`,
+						trigger: item, // ✅ explicit trigger (don't rely on defaults)
+						start: `top ${PIN_TOP}px`,
+						end: () => getSharedEndScrollY(), // absolute scrollY
+						invalidateOnRefresh: true,
+						pin: cardWrap,
+						pinSpacing: false,
+						scrub: true,
+					},
 				});
+				tweens.push(pinTween);
 
-				if (!isLast) {
-					if (!card || !cardWrap) return;
-					gsap.to(card, {
-						scale: 1,
-						ease: "power1.in",
-						scrollTrigger: {
-							pin: cardWrap,
-							pinSpacing: false,
-							startTrigger: item,
-							start: "top 20px",
-							end: () => getSharedEndScrollY(),
-							invalidateOnRefresh: true,
-							scrub: true,
-						},
-					});
+				// Fade (must recompute when card height changes)
+				const getCardH = () => card.getBoundingClientRect().height || card.offsetHeight || 0;
 
-					const getPinDuration = () =>
-						card.offsetHeight || card.getBoundingClientRect().height || 0;
-
-					gsap.to(card, {
-						autoAlpha: 0,
-						ease: "power1.inOut",
-						scrollTrigger: {
-							trigger: item,
-							start: `top+=${getPinDuration() * 0.25} top`,
-							end: `top+=${getPinDuration()} top`,
-							scrub: true,
-						},
-					});
-				}
+				const fadeTween = gsap.to(card, {
+					autoAlpha: 0,
+					ease: "none",
+					scrollTrigger: {
+						id: `ccSolStackV2_fade_${index}`,
+						trigger: item,
+						start: () => `top+=${getCardH() * 0.25} top`,
+						end: () => `top+=${getCardH()} top`,
+						invalidateOnRefresh: true,
+						scrub: true,
+					},
+				});
+				tweens.push(fadeTween);
 			});
+
+			// One refresh once the triggers exist and layout has settled a frame
+			requestAnimationFrame(() => {
+				try {
+					ScrollTrigger.refresh();
+				} catch (e) {}
+			});
+
+			// Cleanup when leaving mq or on mm.kill()
 			return () => {
-				// mm no longer matches
+				tweens.forEach((t) => {
+					try {
+						t?.scrollTrigger?.kill?.();
+					} catch (e) {}
+					try {
+						t?.kill?.();
+					} catch (e) {}
+				});
 			};
 		});
 	}
