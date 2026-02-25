@@ -4185,6 +4185,24 @@ function main() {
 	function anim_expandSolutionServiceTags() {
 		const tagDefaultCount = 3;
 
+		// ✅ When tags expand/collapse, card heights change -> refresh ScrollTrigger
+		const _refreshST =
+			anim_expandSolutionServiceTags._refreshST ||
+			(anim_expandSolutionServiceTags._refreshST = debounce(() => {
+				if (typeof ScrollTrigger !== "undefined" && ScrollTrigger?.refresh) {
+					ScrollTrigger.refresh();
+				}
+			}, 80));
+
+		// wait 1-2 frames so layout settles (Flip/display changes/fonts)
+		function refreshScrollTriggersSoon() {
+			if (typeof requestAnimationFrame === "function") {
+				requestAnimationFrame(() => requestAnimationFrame(() => _refreshST()));
+			} else {
+				_refreshST();
+			}
+		}
+
 		const hasFlip = typeof Flip !== "undefined" && typeof Flip.getState === "function";
 		const getSolCards = () =>
 			Array.from(document.querySelectorAll(".sol-card, .sols-carousel-slide"));
@@ -4366,6 +4384,8 @@ function main() {
 			showEl(moreBtn);
 			card._tagsExpanded = false;
 
+			refreshScrollTriggersSoon();
+
 			// Clear any forced height/overflow from prior FLIP/height tweens
 			gsap.set(card, { clearProps: "height,overflow" });
 		}
@@ -4423,6 +4443,8 @@ function main() {
 			if (!animate) {
 				if (hiddenTags.length) gsap.set(hiddenTags, { clearProps: "opacity,visibility,transform" });
 				card._tagsExpanded = true;
+
+				refreshScrollTriggersSoon();
 				return;
 			}
 
@@ -4468,6 +4490,9 @@ function main() {
 			}
 
 			card._tagsExpanded = true;
+
+			tl.eventCallback("onComplete", refreshScrollTriggersSoon);
+			tl.eventCallback("onInterrupt", refreshScrollTriggersSoon);
 		}
 
 		// Bind + initial sync
@@ -4566,6 +4591,79 @@ function main() {
 		// Extra safety: one delayed sync for late hydration without obvious mutations.
 		// Only schedule if we saw empty tag lists on initial load.
 		anim_expandSolutionServiceTags._syncTimers = sawEmptyTags ? [setTimeout(resyncAll, 250)] : [];
+	}
+
+	function c_solutionStackMbl_v2() {
+		const items = document.querySelectorAll(".sol-listing_list-item");
+		const container = items[0]?.parentElement;
+
+		if (!container) return;
+		if (items.length < 2) return;
+
+		let mm = gsap.matchMedia();
+
+		mm.add("(max-width: 767px)", () => {
+			// Shared end point for all cards:
+			// When the container bottom (== bottom of final card, no padding) reaches the
+			// bottom of the penultimate card while it's pinned at `top 20px`.
+			const PIN_TOP = 20;
+			const getScrollY = () => window.pageYOffset || document.documentElement.scrollTop || 0;
+			const absBottom = (el) => getScrollY() + el.getBoundingClientRect().bottom;
+			const getSharedEndScrollY = () => {
+				const penultimateItem = items[items.length - 2];
+				const penultimateH = penultimateItem
+					? penultimateItem.getBoundingClientRect().height || penultimateItem.offsetHeight || 0
+					: 0;
+				return absBottom(container) - (PIN_TOP + penultimateH);
+			};
+
+			items.forEach((item, index) => {
+				const isLast = index === items.length - 1;
+				const cardWrap = item.querySelector(".sol-card_wrap");
+				const card = item.querySelector(".sol-card");
+
+				console.log(`Setting up scroll animation for item ${index + 1}/${items.length}`, {
+					item,
+					cardWrap,
+					card,
+					isLast,
+				});
+
+				if (!isLast) {
+					if (!card || !cardWrap) return;
+					gsap.to(card, {
+						scale: 1,
+						ease: "power1.in",
+						scrollTrigger: {
+							pin: cardWrap,
+							pinSpacing: false,
+							startTrigger: item,
+							start: "top 20px",
+							end: () => getSharedEndScrollY(),
+							invalidateOnRefresh: true,
+							scrub: true,
+						},
+					});
+
+					const getPinDuration = () =>
+						card.offsetHeight || card.getBoundingClientRect().height || 0;
+
+					gsap.to(card, {
+						autoAlpha: 0,
+						ease: "power1.inOut",
+						scrollTrigger: {
+							trigger: item,
+							start: `top+=${getPinDuration() * 0.25} top`,
+							end: `top+=${getPinDuration()} top`,
+							scrub: true,
+						},
+					});
+				}
+			});
+			return () => {
+				// mm no longer matches
+			};
+		});
 	}
 
 	function c_solutionStackMbl() {
@@ -5860,6 +5958,7 @@ function main() {
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
 								anim_expandSolutionServiceTags();
+								c_solutionStackMbl_v2();
 							}, 0),
 						);
 					}
@@ -5876,6 +5975,7 @@ function main() {
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
 								anim_expandSolutionServiceTags();
+								c_solutionStackMbl_v2();
 							}, 0),
 						);
 					}
@@ -6092,7 +6192,8 @@ function main() {
 
 	anim_scrollReveals();
 	anim_expandSolutionServiceTags();
-	c_solutionStackMbl();
+	// c_solutionStackMbl();
+	c_solutionStackMbl_v2();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
