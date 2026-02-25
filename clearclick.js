@@ -1682,6 +1682,17 @@ function main() {
 				return Number.isFinite(g) ? g : 16;
 			};
 
+			function getTrackPadding() {
+				try {
+					const cs = getComputedStyle(track);
+					const pl = parseFloat(cs.paddingLeft || "0") || 0;
+					const pr = parseFloat(cs.paddingRight || "0") || 0;
+					return { paddingLeft: pl, paddingRight: pr };
+				} catch (e) {
+					return { paddingLeft: 0, paddingRight: 0 };
+				}
+			}
+
 			function getTrackX() {
 				const raw = gsap.getProperty(track, "x");
 				if (typeof raw === "number") return raw;
@@ -1691,21 +1702,26 @@ function main() {
 
 			function getBounds() {
 				const gutter = getGutter();
+				const { paddingLeft, paddingRight } = getTrackPadding();
 				const containerW = orbit.getBoundingClientRect().width;
 				const contentW = track.scrollWidth;
 				const overflow = contentW - containerW;
 				const maxX = gutter;
 				const minX = overflow > 2 ? -overflow - gutter : gutter;
-				return { minX, maxX, gutter, overflow };
+				return { minX, maxX, gutter, overflow, paddingLeft, paddingRight };
 			}
 
 			function rebuildSnapPoints() {
-				const { minX, maxX, gutter } = getBounds();
+				const { minX, maxX, gutter, paddingLeft } = getBounds();
+				const padL = Number.isFinite(paddingLeft) ? paddingLeft : 0;
 
 				// index -> snapX (keeps dot mapping stable)
 				snapByIndex = cards.map((card) => {
+					// offsetLeft is measured from the track's padding edge, so it already includes
+					// `.orbit_cards { padding-left: ... }`. Subtract that so the first snap lines up
+					// with `maxX` (prevents a tiny initial ring segment).
 					const left = card?.offsetLeft ?? 0;
-					return clamp(gutter - left, minX, maxX);
+					return clamp(gutter + padL - left, minX, maxX);
 				});
 
 				// sorted, deduped list for nearestSnap()
@@ -1886,7 +1902,8 @@ function main() {
 			}
 
 			// Start with left gutter and build initial snap points
-			gsap.set(track, { x: getGutter() });
+			const initialGutter = getGutter();
+			gsap.set(track, { x: initialGutter });
 			rebuildSnapPoints();
 			buildDots();
 
