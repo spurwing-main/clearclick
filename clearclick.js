@@ -4593,13 +4593,13 @@ function main() {
 		anim_expandSolutionServiceTags._syncTimers = sawEmptyTags ? [setTimeout(resyncAll, 250)] : [];
 	}
 
-	function c_solutionStackMbl_v2() {
+	function c_solutionStackMbl() {
 		// --- SAFE RE-INIT ---
-		if (c_solutionStackMbl_v2._mm) {
+		if (c_solutionStackMbl._mm) {
 			try {
-				c_solutionStackMbl_v2._mm.kill();
+				c_solutionStackMbl._mm.kill();
 			} catch (e) {}
-			c_solutionStackMbl_v2._mm = null;
+			c_solutionStackMbl._mm = null;
 		}
 
 		try {
@@ -4609,7 +4609,7 @@ function main() {
 		} catch (e) {}
 
 		const mm = gsap.matchMedia();
-		c_solutionStackMbl_v2._mm = mm;
+		c_solutionStackMbl._mm = mm;
 
 		mm.add("(max-width: 767px)", () => {
 			const items = Array.from(document.querySelectorAll(".sol-listing_list-item"));
@@ -4711,268 +4711,6 @@ function main() {
 					try {
 						t?.kill?.();
 					} catch (e) {}
-				});
-			};
-		});
-	}
-
-	function c_solutionStackMbl() {
-		return;
-		const wrapper =
-			document.querySelector(".sol-listing_pin") || document.querySelector(".sol-listing_main");
-		if (!wrapper) return;
-
-		// Kill previous init if this gets called more than once
-		if (c_solutionStackMbl._mm) {
-			c_solutionStackMbl._mm.kill();
-			c_solutionStackMbl._mm = null;
-		}
-
-		const mm = gsap.matchMedia();
-		c_solutionStackMbl._mm = mm;
-
-		mm.add("(max-width: 767px)", () => {
-			const cards = Array.from(wrapper.querySelectorAll(".sol-listing_list-item"));
-			if (cards.length < 2) return;
-
-			const DEBUG_SOL_STACK =
-				localStorage.getItem("ccDebugSolStack") === "1" || window.__CC_DEBUG_SOL_STACK === true;
-
-			// ----------------------------
-			// Tuning
-			// ----------------------------
-			const SCALE_STEP = 0.06; // per "layer above"
-			const MIN_SCALE = 0.72;
-
-			// Background opacity (we fade the .sol-card_bg element)
-			const OPACITY_STEP = 0.08; // per "layer above"
-			const MIN_BG_OPACITY = 0.45;
-
-			// Start trigger: top of card n+1 hits (pinOffset(n) + 0.75 * height(n))
-			const START_FRACTION_FROM_TOP = 0.75;
-
-			const lastCard = cards[cards.length - 1];
-
-			const triggers = [];
-			const timelines = [];
-
-			const debounce = (fn, wait = 100) => {
-				let t;
-				return (...args) => {
-					clearTimeout(t);
-					t = setTimeout(() => fn(...args), wait);
-				};
-			};
-
-			const clamp = (n, min, max) => Math.min(max, Math.max(min, n));
-
-			// nav height + 2rem (+ small per-card bump so pinned items don't sit on the exact same line)
-			const getPinOffset = (i = 0) => {
-				const nav = document.querySelector(".nav");
-				const navH = nav ? nav.getBoundingClientRect().height : 0;
-				const remPx = parseFloat(getComputedStyle(document.documentElement).fontSize || "16") || 16;
-				return Math.round(navH + 2 * remPx) + i * 10;
-			};
-
-			// Absolute top helper (stable for numeric start/end)
-			const getScrollY = () => window.pageYOffset || document.documentElement.scrollTop || 0;
-
-			const absTop = (el) => getScrollY() + el.getBoundingClientRect().top;
-
-			// Stable heights (unscaled)
-			let cardHeights = [];
-			const calculateCardHeights = () => {
-				cardHeights = cards.map((card) => card.offsetHeight);
-			};
-			calculateCardHeights();
-			ScrollTrigger.addEventListener("refreshInit", calculateCardHeights);
-
-			const ensure = (card) => {
-				card._ccSolStack ||= {};
-				return card._ccSolStack;
-			};
-
-			const getInner = (card) => {
-				const s = ensure(card);
-				if ("inner" in s) return s.inner;
-				s.inner = card.querySelector(".sol-card") || null;
-				return s.inner;
-			};
-
-			const getBg = (card) => {
-				const s = ensure(card);
-				if ("bg" in s) return s.bg;
-
-				const bg = card.querySelector(".sol-card_bg");
-				s.bg = bg || null;
-
-				if (bg) {
-					// Capture original inline opacity once
-					if (s.origBgOpacity == null) s.origBgOpacity = bg.style.opacity || "";
-					// Ensure we have a numeric base opacity to tween from
-					const computed = getComputedStyle(bg).opacity;
-					s.baseBgOpacity = Number.isFinite(parseFloat(computed)) ? parseFloat(computed) : 1;
-				}
-
-				return s.bg;
-			};
-
-			// Prep layering + transform origins
-			cards.forEach((card, i) => {
-				gsap.set(card, { zIndex: i + 1 });
-
-				const inner = getInner(card);
-				if (inner) gsap.set(inner, { transformOrigin: "50% 0%", willChange: "transform" });
-
-				const bg = getBg(card);
-				if (bg) gsap.set(bg, { willChange: "opacity" });
-			});
-
-			// ----------------------------
-			// Pins (all but last)
-			// ----------------------------
-			cards.slice(0, -1).forEach((card, i) => {
-				const st = ScrollTrigger.create({
-					id: `ccSolStackPin_${i}`,
-					trigger: card,
-					start: () => `top top+=${getPinOffset(i)}`,
-					endTrigger: lastCard,
-					end: () => `top top+=${getPinOffset(i)}`, // release when LAST card reaches same offset line
-					pin: true,
-					pinSpacing: false,
-					anticipatePin: 1,
-					invalidateOnRefresh: true,
-					refreshPriority: 1, // ✅ pins refresh first
-					markers: DEBUG_SOL_STACK,
-				});
-				triggers.push(st);
-			});
-
-			// ----------------------------
-			// Anim timelines (one per card except last)
-			// ----------------------------
-			// ✅ Key change:
-			// Do NOT use nextCard as the trigger element, because nextCard gets pinned later.
-			// Instead use numeric absolute start/end positions computed from element tops.
-			cards.slice(0, -1).forEach((cardN, n) => {
-				const nextCard = cards[n + 1];
-				if (!nextCard) return;
-
-				const inner = getInner(cardN);
-				const bg = getBg(cardN);
-				if (!inner && !bg) return;
-
-				const maxLayersAbove = cards.length - 1 - n;
-
-				const targetScale = clamp(1 - maxLayersAbove * SCALE_STEP, MIN_SCALE, 1);
-				const baseOpacity = ensure(cardN).baseBgOpacity ?? 1;
-				const targetOpacity = clamp(
-					baseOpacity - maxLayersAbove * OPACITY_STEP,
-					MIN_BG_OPACITY,
-					baseOpacity,
-				);
-
-				// Ensure deterministic start state
-				if (inner) gsap.set(inner, { scale: 1 });
-				if (bg) gsap.set(bg, { opacity: baseOpacity });
-
-				const tl = gsap.timeline({
-					defaults: { ease: "none" },
-					scrollTrigger: {
-						id: `ccSolStackAnim_${n}`,
-						trigger: wrapper, // ✅ stable trigger
-
-						start: () => {
-							const h = cardHeights[n] || cardN.offsetHeight || 0;
-							const line = getPinOffset(n) + START_FRACTION_FROM_TOP * h;
-
-							// When nextCard.top (viewport) == line,
-							// scrollY == absTop(nextCard) - line
-							const s = Math.round(absTop(nextCard) - line);
-							return s;
-						},
-
-						endTrigger: lastCard,
-						end: () => {
-							// When lastCard.top (viewport) == getPinOffset(n),
-							// scrollY == absTop(lastCard) - getPinOffset(n)
-							let e = Math.round(absTop(lastCard) - getPinOffset(n));
-
-							// Safety: never allow end <= start (kills scrub / freezes)
-							const st = tl.scrollTrigger;
-							const s = st ? st.start : e - 1;
-							if (e <= s) e = s + 1;
-
-							return e;
-						},
-
-						scrub: 0.4,
-						invalidateOnRefresh: true,
-						refreshPriority: -1, // ✅ anim triggers refresh after pins
-						markers: DEBUG_SOL_STACK,
-					},
-				});
-
-				if (inner) tl.to(inner, { scale: targetScale }, 0);
-				if (bg) tl.to(bg, { opacity: targetOpacity }, 0);
-
-				timelines.push(tl);
-				triggers.push(tl.scrollTrigger);
-
-				// debug hook if you want it
-				if (window.clearclick) window.clearclick.timelines = timelines;
-			});
-
-			// ----------------------------
-			// Refresh handling (service-tag expand / resize)
-			// ----------------------------
-			const refresh = debounce(() => ScrollTrigger.refresh(), 120);
-
-			const onClick = (e) => {
-				if (!e.target.closest(".sol-card_services-more")) return;
-				setTimeout(refresh, 600);
-			};
-			wrapper.addEventListener("click", onClick);
-
-			let ro = null;
-			if (typeof ResizeObserver !== "undefined") {
-				ro = new ResizeObserver(() => refresh());
-				cards.forEach((c) => ro.observe(c));
-			}
-
-			// Extra-safe: refresh after full load too (images/fonts/layout shifts)
-			const onLoad = () => ScrollTrigger.refresh();
-			window.addEventListener("load", onLoad, { once: true });
-
-			requestAnimationFrame(() => ScrollTrigger.refresh());
-
-			// ----------------------------
-			// Cleanup
-			// ----------------------------
-			return () => {
-				wrapper.removeEventListener("click", onClick);
-				window.removeEventListener("load", onLoad);
-				if (ro) ro.disconnect();
-
-				ScrollTrigger.removeEventListener("refreshInit", calculateCardHeights);
-
-				triggers.forEach((st) => st?.kill?.());
-				timelines.forEach((t) => t?.kill?.());
-
-				cards.forEach((card) => {
-					gsap.set(card, { clearProps: "zIndex" });
-
-					const s = card._ccSolStack;
-					if (!s) return;
-
-					if (s.inner) gsap.set(s.inner, { clearProps: "transform,transformOrigin,willChange" });
-
-					if (s.bg) {
-						s.bg.style.opacity = s.origBgOpacity || "";
-						gsap.set(s.bg, { clearProps: "willChange" });
-					}
-
-					delete card._ccSolStack;
 				});
 			};
 		});
@@ -5987,6 +5725,111 @@ function main() {
 		if (firstTopicId) activateTopic(firstTopicId);
 	}
 
+	function c_cookiePrefsDropdowns() {
+		const dropdowns = Array.from(document.querySelectorAll(".fs-cc-prefs_dropdown"));
+		if (!dropdowns.length) return;
+
+		const log = createDebugLog("cookiePrefsDropdowns");
+		const OPEN_ROT = 90;
+		const CLOSED_ROT = 0;
+
+		function setOpenState(dropdownEl, isOpen, { animate = true } = {}) {
+			if (!dropdownEl) return;
+			const content = dropdownEl.querySelector(".fs-cc-prefs_dropdown-content");
+			const icon = dropdownEl.querySelector(".fs-cc-prefs_dropdown_icon");
+			if (!content) return;
+
+			dropdownEl.classList.toggle("is-open", !!isOpen);
+			dropdownEl.dataset.ccPrefsOpen = isOpen ? "1" : "0";
+
+			gsap.killTweensOf(content);
+			if (icon) gsap.killTweensOf(icon);
+
+			if (!animate) {
+				if (isOpen) {
+					gsap.set(content, { height: "auto", overflow: "visible" });
+				} else {
+					gsap.set(content, { height: 0, overflow: "hidden" });
+				}
+
+				if (icon) {
+					gsap.set(icon, {
+						rotation: isOpen ? OPEN_ROT : CLOSED_ROT,
+						transformOrigin: "50% 50%",
+					});
+				}
+				return;
+			}
+
+			if (isOpen) {
+				gsap.set(content, { overflow: "hidden" });
+				gsap.fromTo(
+					content,
+					{ height: 0 },
+					{
+						height: "auto",
+						duration: 0.3,
+						ease: "power3.out",
+						onComplete: () => gsap.set(content, { height: "auto", overflow: "visible" }),
+					},
+				);
+			} else {
+				gsap.set(content, { height: content.offsetHeight, overflow: "hidden" });
+				gsap.to(content, {
+					height: 0,
+					duration: 0.25,
+					ease: "power3.inOut",
+				});
+			}
+
+			if (icon) {
+				gsap.to(icon, {
+					rotation: isOpen ? OPEN_ROT : CLOSED_ROT,
+					duration: 0.25,
+					ease: "power2.out",
+					overwrite: "auto",
+					transformOrigin: "50% 50%",
+				});
+			}
+		}
+
+		dropdowns.forEach((dropdownEl) => {
+			const toggle = dropdownEl.querySelector(".fs-cc-prefs_dropdown-toggle") || dropdownEl;
+			const content = dropdownEl.querySelector(".fs-cc-prefs_dropdown-content");
+			const icon = dropdownEl.querySelector(".fs-cc-prefs_dropdown_icon");
+			if (!toggle || !content) return;
+
+			// Spec: assume all prefs dropdowns are closed on load.
+			setOpenState(dropdownEl, false, { animate: false });
+
+			if (toggle.dataset.ccPrefsDdBound === "1") return;
+			toggle.dataset.ccPrefsDdBound = "1";
+
+			// Capture + stopImmediatePropagation helps avoid Webflow IX double-handling.
+			toggle.addEventListener(
+				"click",
+				(e) => {
+					e.preventDefault();
+					if (typeof e.stopImmediatePropagation === "function") e.stopImmediatePropagation();
+					e.stopPropagation();
+
+					const open = dropdownEl.dataset.ccPrefsOpen === "1";
+					setOpenState(dropdownEl, !open, { animate: true });
+
+					if (log.enabled) {
+						log("toggle", {
+							open: !open,
+							dropdownEl,
+							content,
+							icon,
+						});
+					}
+				},
+				true,
+			);
+		});
+	}
+
 	function hookFinsweetRenders() {
 		window.FinsweetAttributes ||= [];
 		window.FinsweetAttributes.push([
@@ -6008,7 +5851,7 @@ function main() {
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
 								anim_expandSolutionServiceTags();
-								c_solutionStackMbl_v2();
+								c_solutionStackMbl();
 							}, 0),
 						);
 					}
@@ -6025,7 +5868,7 @@ function main() {
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
 								anim_expandSolutionServiceTags();
-								c_solutionStackMbl_v2();
+								c_solutionStackMbl();
 							}, 0),
 						);
 					}
@@ -6242,8 +6085,8 @@ function main() {
 
 	anim_scrollReveals();
 	anim_expandSolutionServiceTags();
-	// c_solutionStackMbl();
-	c_solutionStackMbl_v2();
+	c_solutionStackMbl();
+	c_cookiePrefsDropdowns();
 
 	// wait for fonts to load before animating text
 	document.fonts.ready.then(() => {
