@@ -275,7 +275,7 @@ function main() {
 			tl.to(split.words, {
 				autoAlpha: 1,
 				duration: 0.4,
-				ease: "power1.inOut",
+				ease: "linear",
 				stagger: 0.01,
 				overwrite: "auto",
 			});
@@ -310,7 +310,7 @@ function main() {
 			// Designed to be reversible when scrolling back up.
 			tl.scrollTrigger = ScrollTrigger.create({
 				trigger: el,
-				start: "top 65%",
+				start: "top 75%",
 				end: "top 45%",
 				scrub: 0.6,
 				invalidateOnRefresh: true,
@@ -1266,7 +1266,7 @@ function main() {
 
 		const OPTIONS = {
 			align: "start",
-			loop: true,
+			loop: false,
 			skipSnaps: false,
 			duration: 14,
 		};
