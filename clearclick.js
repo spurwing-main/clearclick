@@ -244,6 +244,89 @@ function main() {
 		});
 	}
 
+	function c_logoScrollMarquee() {
+		const components = Array.from(document.querySelectorAll(".c-logo-scroll"));
+		if (!components.length) return;
+
+		const log = createDebugLog("logoScrollMarquee");
+		const MIN_ITEMS_PER_LIST = 9;
+
+		function clearInjectedItems(listEl) {
+			listEl
+				.querySelectorAll(".logo-scroll_list-item[data-cc-logo-clone='1']")
+				.forEach((item) => item.remove());
+		}
+
+		function buildClonesForList(listEl) {
+			if (!listEl) return { ready: false, finalCount: 0, targetCount: 0, duplicateSetsAdded: 0 };
+
+			clearInjectedItems(listEl);
+
+			const sourceItems = Array.from(listEl.children).filter(
+				(item) =>
+					item.classList?.contains("logo-scroll_list-item") && item.dataset.ccLogoClone !== "1",
+			);
+
+			if (!sourceItems.length) {
+				return { ready: false, finalCount: 0, targetCount: 0, duplicateSetsAdded: 0 };
+			}
+
+			let currentCount = sourceItems.length;
+			let duplicateSetsAdded = 0;
+
+			while (currentCount < MIN_ITEMS_PER_LIST) {
+				sourceItems.forEach((sourceItem) => {
+					const clone = sourceItem.cloneNode(true);
+					clone.dataset.ccLogoClone = "1";
+					clone.setAttribute("aria-hidden", "true");
+					clone.querySelectorAll("img").forEach((img) => {
+						img.setAttribute("aria-hidden", "true");
+						img.setAttribute("alt", "");
+					});
+					listEl.appendChild(clone);
+				});
+
+				duplicateSetsAdded += 1;
+				currentCount += sourceItems.length;
+			}
+
+			return {
+				ready: currentCount >= MIN_ITEMS_PER_LIST,
+				finalCount: currentCount,
+				targetCount: MIN_ITEMS_PER_LIST,
+				duplicateSetsAdded,
+			};
+		}
+
+		components.forEach((component) => {
+			const lists = Array.from(component.querySelectorAll(".logo-scroll_list"));
+			if (!lists.length) {
+				component.classList.remove("is-enabled");
+				return;
+			}
+
+			component.classList.remove("is-enabled");
+			let allReady = true;
+
+			lists.forEach((listEl) => {
+				const result = buildClonesForList(listEl);
+				if (!result.ready) allReady = false;
+
+				if (log.enabled) {
+					log("sync", {
+						component,
+						listEl,
+						finalCount: result.finalCount,
+						targetCount: result.targetCount,
+						duplicateSetsAdded: result.duplicateSetsAdded,
+					});
+				}
+			});
+
+			if (allReady) component.classList.add("is-enabled");
+		});
+	}
+
 	function anim_textFadeIn() {
 		const startOpacity = 0.3;
 		const els = gsap.utils.toArray(".anim-text-fade");
@@ -5847,6 +5930,7 @@ function main() {
 								c_solutionTabs();
 								c_simpleTabs();
 								c_csListFiltersDraggable();
+								c_logoScrollMarquee();
 								anim_scrollReveals();
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
@@ -5864,6 +5948,7 @@ function main() {
 								c_solutionTabs();
 								c_simpleTabs();
 								c_csListFiltersDraggable();
+								c_logoScrollMarquee();
 								anim_scrollReveals();
 								c_caseStudiesSimpleCarousel();
 								c_solsCarousel();
@@ -5878,6 +5963,7 @@ function main() {
 				c_solutionTabs();
 				c_simpleTabs();
 				c_csListFiltersDraggable();
+				c_logoScrollMarquee();
 				anim_scrollReveals();
 				c_caseStudiesSimpleCarousel();
 				c_solsCarousel();
@@ -6072,6 +6158,7 @@ function main() {
 	nav_open();
 	nav_dropdowns();
 	anim_logoStaggers();
+	c_logoScrollMarquee();
 	c_latestCarousel();
 	c_introStats();
 	c_approachCarousel();
