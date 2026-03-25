@@ -4183,7 +4183,7 @@ function main() {
 	}
 
 	function anim_expandSolutionServiceTags() {
-		const tagDefaultCount = 3;
+		const tagDefaultCount = 5;
 
 		// ✅ When tags expand/collapse, card heights change -> refresh ScrollTrigger
 		const _refreshST =
