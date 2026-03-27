@@ -1609,7 +1609,7 @@ function main() {
 	}
 
 	function c_orbit() {
-		const component = document.querySelector(".c-process");
+		const component = document.querySelector('.c-process:not([data-cc-orbit-measurement="true"])');
 		if (!component) return;
 
 		const log = createDebugLog("orbit");
@@ -1626,41 +1626,293 @@ function main() {
 
 		const orbit = component.querySelector(".c-orbit");
 		const track = component.querySelector(".orbit_cards");
+		if (!orbit || !track) return;
 
 		// Scope queries to this component (avoids collisions if multiple exist)
 		const cards = gsap.utils.toArray(component.querySelectorAll(".orbit-card"));
+		if (!cards.length) return;
 		log("Found cards:", cards.length);
+		const cardBackgrounds = cards
+			.map((card) => card.querySelector(".orbit-card_bg"))
+			.filter(Boolean);
+		const cardInners = cards.map((card) => card.querySelector(".orbit-card_inner")).filter(Boolean);
 		const ring = component.querySelector(".orbit_ring-progress");
 		const pulse = component.querySelector(".orbit_ring-pulse");
 
-		// ---- safe re-init cleanup ----
-		if (orbit._mm) {
+		const STEP_KEYS = ["1", "2", "3", "4"];
+		const OVERLAP_PAIRS = [
+			["1", "2"],
+			["2", "3"],
+			["3", "4"],
+			["4", "1"],
+		];
+		const ORBIT_CIRCLE_SCALE = 0.574;
+		const DESKTOP_MIN_WIDTH = 992;
+		const DESKTOP_MIN_HEIGHT = 640;
+
+		if (typeof orbit._ccOrbitControllerCleanup === "function") {
 			try {
-				orbit._mm.kill();
+				orbit._ccOrbitControllerCleanup();
 			} catch (e) {}
-			orbit._mm = null;
 		}
-		const old = ScrollTrigger.getById("ccOrbitSticky");
-		if (old) old.kill();
 
-		gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
+		function resetOrbitBaseState() {
+			if (orbit._mm) {
+				try {
+					orbit._mm.kill();
+				} catch (e) {}
+				orbit._mm = null;
+			}
 
-		// Common baselines
-		gsap.set(cards, { clearProps: "transform" });
-		if (ring) {
-			gsap.set(ring, {
-				drawSVG: "0%",
-				rotate: -90,
-				transformOrigin: "50% 50%",
+			const old = ScrollTrigger.getById("ccOrbitSticky");
+			if (old) old.kill();
+
+			gsap.killTweensOf([
+				stickyEl,
+				...cards,
+				...cardBackgrounds,
+				...cardInners,
+				ring,
+				pulse,
+				track,
+			]);
+
+			cards.forEach((card) => {
+				card?.classList?.remove?.("is-active");
 			});
+
+			gsap.set(cards, { clearProps: "transform,opacity,visibility" });
+			gsap.set(cardBackgrounds, { clearProps: "opacity,visibility,transform" });
+			gsap.set(cardInners, { clearProps: "opacity,visibility,transform,y" });
+			gsap.set(track, { clearProps: "transform" });
+
+			if (ring) {
+				gsap.set(ring, {
+					drawSVG: "0%",
+					rotate: -90,
+					transformOrigin: "50% 50%",
+				});
+			}
+
+			if (pulse) {
+				gsap.set(pulse, {
+					opacity: 0,
+					clearProps: "transform",
+					transformOrigin: "50% 50%",
+				});
+			}
 		}
-		if (pulse) gsap.set(pulse, { opacity: 0, transformOrigin: "50% 50%" });
 
-		const mm = gsap.matchMedia();
-		orbit._mm = mm;
+		function teardownActiveMode() {
+			if (typeof orbit._ccOrbitModeCleanup === "function") {
+				try {
+					orbit._ccOrbitModeCleanup();
+				} catch (e) {}
+			}
 
-		// Desktop tall enough: scrub the sequence while CSS sticky holds the element
-		mm.add("(min-width: 992px) and (min-height: 640px)", () => {
+			orbit._ccOrbitModeCleanup = null;
+			orbit._ccOrbitMode = null;
+			resetOrbitBaseState();
+		}
+
+		function destroyMeasurementLayer() {
+			if (orbit._ccOrbitMeasurement?.host?.isConnected) {
+				orbit._ccOrbitMeasurement.host.remove();
+			}
+			orbit._ccOrbitMeasurement = null;
+		}
+
+		function getMeasurementLayer() {
+			let measurement = orbit._ccOrbitMeasurement;
+
+			if (!measurement?.host?.isConnected) {
+				const host = document.createElement("div");
+				host.className = "c-process";
+				host.setAttribute("data-orbit-enabled", "true");
+				host.setAttribute("data-cc-orbit-measurement", "true");
+				host.setAttribute("aria-hidden", "true");
+				Object.assign(host.style, {
+					position: "absolute",
+					left: "-99999px",
+					top: "0",
+					visibility: "hidden",
+					pointerEvents: "none",
+					zIndex: "-1",
+				});
+
+				const orbitMeasure = document.createElement("div");
+				orbitMeasure.className = "c-orbit";
+
+				const trackMeasure = document.createElement("div");
+				trackMeasure.className = "orbit_cards";
+				Object.assign(trackMeasure.style, {
+					position: "relative",
+					inset: "auto",
+					display: "block",
+					width: "max-content",
+					maxWidth: "none",
+					padding: "0",
+				});
+
+				orbitMeasure.appendChild(trackMeasure);
+				host.appendChild(orbitMeasure);
+				document.body.appendChild(host);
+
+				measurement = {
+					host,
+					orbitMeasure,
+					trackMeasure,
+					cardsByStep: {},
+				};
+
+				orbit._ccOrbitMeasurement = measurement;
+			}
+
+			const orbitWidth = orbit.getBoundingClientRect().width;
+			if (Number.isFinite(orbitWidth) && orbitWidth > 0) {
+				measurement.orbitMeasure.style.width = `${orbitWidth}px`;
+			} else {
+				measurement.orbitMeasure.style.removeProperty("width");
+			}
+
+			measurement.trackMeasure.innerHTML = "";
+			measurement.cardsByStep = {};
+
+			for (const step of STEP_KEYS) {
+				const source = component.querySelector(`.orbit-card[data-step="${step}"]`);
+				if (!source) continue;
+
+				const clone = source.cloneNode(true);
+				clone.classList.remove("is-active");
+				Object.assign(clone.style, {
+					position: "relative",
+					inset: "auto",
+					transform: "none",
+					opacity: "1",
+					visibility: "visible",
+					display: "block",
+					pointerEvents: "none",
+					margin: "0",
+				});
+
+				measurement.trackMeasure.appendChild(clone);
+				measurement.cardsByStep[step] = clone;
+			}
+
+			return measurement;
+		}
+
+		function getOrbitMeasurements() {
+			const measurement = getMeasurementLayer();
+			const orbitHeight = orbit.getBoundingClientRect().height;
+			const circleDiameter = orbitHeight * ORBIT_CIRCLE_SCALE;
+			const radius = circleDiameter / 2;
+			const heights = {};
+
+			for (const step of STEP_KEYS) {
+				const card = measurement.cardsByStep[step];
+				const cardHeight = card?.getBoundingClientRect?.().height || 0;
+
+				if (!card || !Number.isFinite(cardHeight) || cardHeight <= 0) {
+					return {
+						valid: false,
+						reason: `missing-or-invalid-card-${step}`,
+						orbitHeight,
+						circleDiameter,
+						radius,
+						heights,
+						checks: [],
+						anyFail: true,
+					};
+				}
+
+				heights[step] = cardHeight;
+			}
+
+			if (
+				!Number.isFinite(orbitHeight) ||
+				orbitHeight <= 0 ||
+				!Number.isFinite(radius) ||
+				radius <= 0
+			) {
+				return {
+					valid: false,
+					reason: "invalid-orbit-height",
+					orbitHeight,
+					circleDiameter,
+					radius,
+					heights,
+					checks: [],
+					anyFail: true,
+				};
+			}
+
+			const checks = OVERLAP_PAIRS.map(([a, b]) => {
+				const required = heights[a] * 0.5 + heights[b] * 0.5;
+				return {
+					pair: `${a}-${b}`,
+					required,
+					passes: required <= radius,
+				};
+			});
+
+			return {
+				valid: true,
+				reason: null,
+				orbitHeight,
+				circleDiameter,
+				radius,
+				heights,
+				checks,
+				anyFail: checks.some((check) => !check.passes),
+			};
+		}
+
+		function selectOrbitMode() {
+			const width = window.innerWidth || 0;
+			const height = window.innerHeight || 0;
+
+			if (width <= DESKTOP_MIN_WIDTH - 1) {
+				destroyMeasurementLayer();
+				return {
+					mode: "slider",
+					enabled: false,
+					reason: "viewport-width",
+					metrics: null,
+				};
+			}
+
+			const metrics = getOrbitMeasurements();
+			if (!metrics.valid) {
+				return {
+					mode: "slider",
+					enabled: false,
+					reason: metrics.reason || "invalid-measurements",
+					metrics,
+				};
+			}
+
+			if (metrics.anyFail) {
+				return {
+					mode: "slider",
+					enabled: false,
+					reason: `overlap:${metrics.checks
+						.filter((check) => !check.passes)
+						.map((check) => check.pair)
+						.join(",")}`,
+					metrics,
+				};
+			}
+
+			return {
+				mode: height >= DESKTOP_MIN_HEIGHT ? "desktop-tall" : "desktop-short",
+				enabled: true,
+				reason: height >= DESKTOP_MIN_HEIGHT ? "desktop-tall-eligible" : "desktop-short-eligible",
+				metrics,
+			};
+		}
+
+		function setupDesktopTallOrbit() {
 			gsap.set(cards, { autoAlpha: 0 });
 
 			const tl = gsap.timeline({
@@ -1668,10 +1920,9 @@ function main() {
 					id: "ccOrbitSticky",
 					trigger: spacerEl,
 					start: "top bottom",
-					end: "bottom bottom", // full spacer scroll distance
+					end: "bottom bottom",
 					scrub: 1,
 					invalidateOnRefresh: true,
-					// markers: true,
 				},
 			});
 
@@ -1682,8 +1933,7 @@ function main() {
 				gsap.set(bg, { autoAlpha: 0 });
 				gsap.set(inner, { autoAlpha: 0 });
 
-				// Stagger card fade-ins
-				tl.to(card, { autoAlpha: 1, duration: 0.01 }, ">"); // just make card participate in stacking
+				tl.to(card, { autoAlpha: 1, duration: 0.01 }, ">");
 				tl.to(bg, { autoAlpha: 1, duration: 1.5, ease: "power2.out" }, "<");
 				tl.to(inner, { autoAlpha: 1, y: 0, duration: 1.5, ease: "power2.out" }, "<0.05");
 
@@ -1704,36 +1954,33 @@ function main() {
 				tl.scrollTrigger?.kill();
 				tl.kill();
 			};
-		});
+		}
 
-		// Desktop short height: no sticky/pin behavior—just show end-state
-		mm.add("(min-width: 992px) and (max-height: 639px)", () => {
+		function setupDesktopShortOrbit() {
 			gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
 
 			gsap.set(cards, { opacity: 1, clearProps: "transform" });
-			if (track) gsap.set(track, { clearProps: "transform" });
+			gsap.set(track, { clearProps: "transform" });
 
 			if (ring) {
 				gsap.set(ring, {
 					rotate: -90,
 					transformOrigin: "50% 50%",
 					drawSVG: "100%",
-					clearProps: "scale,opacity",
 				});
 			}
+
 			if (pulse) gsap.set(pulse, { opacity: 0, clearProps: "transform" });
 
 			return () => gsap.killTweensOf([stickyEl, ...cards, ring, pulse, track]);
-		});
+		}
 
-		// Mobile: horizontally draggable slider (no scroll hijack)
-		mm.add("(max-width: 991px)", () => {
+		function setupSliderOrbit() {
 			gsap.set(cards, { opacity: 1 });
 
-			if (!orbit || !track) return;
 			if (typeof Draggable === "undefined") {
-				console.warn("[clearclick] Draggable not loaded for c_orbit() mobile");
-				return;
+				console.warn("[clearclick] Draggable not loaded for c_orbit() slider mode");
+				return () => {};
 			}
 
 			let draggable = null;
@@ -1744,10 +1991,6 @@ function main() {
 
 			const clamp = (v, min, max) => Math.min(max, Math.max(min, v));
 
-			// More sensitive snap: how far (fraction of the snap distance) you must drag
-			// from the *starting* snap to advance to the next/prev.
-			// Default 0.3 (vs ~0.5 for pure nearest-snap).
-			// Optional override: `data-cc-orbit-snap-threshold="0.25"` on `.c-orbit`.
 			const snapThresholdRatio = (() => {
 				const raw = orbit?.getAttribute?.("data-cc-orbit-snap-threshold");
 				const n = raw == null ? 0.1 : parseFloat(raw);
@@ -1762,22 +2005,18 @@ function main() {
 				return Math.min(48, Math.max(0, n));
 			})();
 
-			// ----------------------------
-			// Dots (optional)
-			// ----------------------------
 			const dotsNode =
 				component.querySelector(".latest_dots.is-orbit") ||
 				orbit.querySelector?.(".latest_dots.is-orbit") ||
 				null;
 
 			let dotNodes = [];
-			let snapByIndex = []; // index -> snapX
-			let snapPointsSorted = []; // snapX[] (sorted, deduped)
+			let snapByIndex = [];
+			let snapPointsSorted = [];
 			let activeDotIndex = -1;
 			let activeCardIndex = -1;
 
 			function setActiveCard(index) {
-				if (!cards || !cards.length) return;
 				const next = Math.max(0, Math.min(index ?? 0, cards.length - 1));
 				if (next === activeCardIndex) return;
 				activeCardIndex = next;
@@ -1786,48 +2025,11 @@ function main() {
 				});
 			}
 
-			function updateActiveCardFromX(x) {
-				setActiveCard(getActiveIndexFromX(x));
-			}
-
-			function buildDots() {
-				if (!dotsNode) return;
-
-				// Rebuild deterministically
-				dotsNode.innerHTML = cards
-					.map((_, i) => `<button class="latest_dot" type="button" data-index="${i}"></button>`)
-					.join("");
-
-				dotNodes = Array.from(dotsNode.querySelectorAll(".latest_dot"));
-
-				dotNodes.forEach((dot) => {
-					dot.addEventListener("click", () => {
-						const idx = Number(dot.dataset.index);
-						if (!Number.isFinite(idx)) return;
-						scrollToIndex(idx, { animate: true });
-					});
-				});
-
-				// Set initial selected state
-				updateActiveDotFromX(getTrackX());
-			}
-
-			function setActiveDot(index) {
-				if (!dotsNode) return;
-				if (index === activeDotIndex) return;
-				activeDotIndex = index;
-
-				dotNodes.forEach((dot, i) => {
-					dot.classList.toggle("latest_dot--selected", i === index);
-				});
-			}
-
 			function getActiveIndexFromX(x) {
 				if (!snapByIndex.length) return 0;
 
 				let bestI = 0;
 				let bestD = Infinity;
-
 				for (let i = 0; i < snapByIndex.length; i++) {
 					const sx = snapByIndex[i];
 					if (!Number.isFinite(sx)) continue;
@@ -1840,6 +2042,19 @@ function main() {
 				return bestI;
 			}
 
+			function updateActiveCardFromX(x) {
+				setActiveCard(getActiveIndexFromX(x));
+			}
+
+			function setActiveDot(index) {
+				if (!dotsNode) return;
+				if (index === activeDotIndex) return;
+				activeDotIndex = index;
+				dotNodes.forEach((dot, i) => {
+					dot.classList.toggle("latest_dot--selected", i === index);
+				});
+			}
+
 			function updateActiveDotFromX(x) {
 				if (!dotsNode) return;
 				setActiveDot(getActiveIndexFromX(x));
@@ -1850,7 +2065,6 @@ function main() {
 				const sx = snapByIndex[index];
 
 				if (!Number.isFinite(sx)) {
-					// fallback: snap to nearest sorted point if mapping is missing
 					const current = clamp(getTrackX(), minX, maxX);
 					const target = clamp(nearestSnap(current), minX, maxX);
 					gsap.set(track, { x: target });
@@ -1862,7 +2076,6 @@ function main() {
 				}
 
 				const target = clamp(sx, minX, maxX);
-
 				if (!animate) {
 					gsap.set(track, { x: target });
 					draggable?.update?.();
@@ -1901,11 +2114,7 @@ function main() {
 				});
 			}
 
-			// ----------------------------
-			// Existing helpers
-			// ----------------------------
 			const getGutter = () => {
-				if (!orbit) return 16;
 				const raw = getComputedStyle(orbit).getPropertyValue("--cc-orbit-gutter");
 				const g = parseFloat(raw || "");
 				return Number.isFinite(g) ? g : 16;
@@ -1944,16 +2153,11 @@ function main() {
 				const { minX, maxX, gutter, paddingLeft } = getBounds();
 				const padL = Number.isFinite(paddingLeft) ? paddingLeft : 0;
 
-				// index -> snapX (keeps dot mapping stable)
 				snapByIndex = cards.map((card) => {
-					// offsetLeft is measured from the track's padding edge, so it already includes
-					// `.orbit_cards { padding-left: ... }`. Subtract that so the first snap lines up
-					// with `maxX` (prevents a tiny initial ring segment).
 					const left = card?.offsetLeft ?? 0;
 					return clamp(gutter + padL - left, minX, maxX);
 				});
 
-				// sorted, deduped list for nearestSnap()
 				snapPointsSorted = snapByIndex
 					.filter((n) => Number.isFinite(n))
 					.slice()
@@ -1968,7 +2172,6 @@ function main() {
 					snapPointsSorted = [x];
 				}
 
-				// Keep dots in sync when layout changes
 				updateActiveDotFromX(getTrackX());
 				updateActiveCardFromX(getTrackX());
 			}
@@ -2063,14 +2266,12 @@ function main() {
 					return;
 				}
 
-				// Small deadzone: treat tiny movement as "snap back".
 				const delta = currentX - baseX;
 				if (Math.abs(delta) < 1) {
 					scrollToIndex(baseIndex, { animate });
 					return;
 				}
 
-				// Dragging left => track x decreases => move forward (index + 1)
 				const dir = delta < 0 ? 1 : -1;
 				let targetIndex = baseIndex;
 
@@ -2085,11 +2286,9 @@ function main() {
 					const required = Math.max(snapThresholdMinPx, dist * snapThresholdRatio);
 
 					if (dir > 0) {
-						// Moving left: x must drop enough from the current snap
 						if (currentX <= fromX - required) targetIndex = nextIndex;
 						else break;
 					} else {
-						// Moving right: x must rise enough from the current snap
 						if (currentX >= fromX + required) targetIndex = nextIndex;
 						else break;
 					}
@@ -2118,7 +2317,6 @@ function main() {
 				updateRingFromX(nowX);
 				updateActiveDotFromX(nowX);
 				updateActiveCardFromX(nowX);
-
 				if (snap) snapToNearest({ animate: false });
 			}
 
@@ -2130,7 +2328,25 @@ function main() {
 				});
 			}
 
-			// Start with left gutter and build initial snap points
+			function buildDots() {
+				if (!dotsNode) return;
+
+				dotsNode.innerHTML = cards
+					.map((_, i) => `<button class="latest_dot" type="button" data-index="${i}"></button>`)
+					.join("");
+
+				dotNodes = Array.from(dotsNode.querySelectorAll(".latest_dot"));
+				dotNodes.forEach((dot) => {
+					dot.addEventListener("click", () => {
+						const idx = Number(dot.dataset.index);
+						if (!Number.isFinite(idx)) return;
+						scrollToIndex(idx, { animate: true });
+					});
+				});
+
+				updateActiveDotFromX(getTrackX());
+			}
+
 			const initialGutter = getGutter();
 			gsap.set(track, { x: initialGutter });
 			rebuildSnapPoints();
@@ -2182,12 +2398,12 @@ function main() {
 				if (raf) cancelAnimationFrame(raf);
 				raf = 0;
 
-				// Clear dots
 				if (dotsNode) {
 					try {
 						dotsNode.innerHTML = "";
 					} catch (e) {}
 				}
+
 				dotNodes = [];
 				snapByIndex = [];
 				snapPointsSorted = [];
@@ -2203,6 +2419,7 @@ function main() {
 					} catch (e) {}
 					ro = null;
 				}
+
 				try {
 					draggable?.kill?.();
 				} catch (e) {}
@@ -2210,7 +2427,79 @@ function main() {
 				gsap.killTweensOf(track);
 				gsap.set(track, { clearProps: "transform" });
 			};
-		});
+		}
+
+		function applyOrbitDecision({ force = false } = {}) {
+			const decision = selectOrbitMode();
+			const enabledAttr = decision.enabled ? "true" : "false";
+			const modeUnchanged = orbit._ccOrbitMode === decision.mode;
+			const enabledUnchanged = component.getAttribute("data-orbit-enabled") === enabledAttr;
+
+			if (!force && modeUnchanged && enabledUnchanged) {
+				if (decision.metrics) {
+					log("Mode unchanged", {
+						mode: decision.mode,
+						enabled: decision.enabled,
+						reason: decision.reason,
+						metrics: decision.metrics,
+					});
+				}
+				return;
+			}
+
+			teardownActiveMode();
+			component.setAttribute("data-orbit-enabled", enabledAttr);
+			orbit.removeAttribute("data-orbit-enabled");
+			orbit._ccOrbitMode = decision.mode;
+			orbit._ccOrbitModeCleanup =
+				decision.mode === "desktop-tall"
+					? setupDesktopTallOrbit()
+					: decision.mode === "desktop-short"
+						? setupDesktopShortOrbit()
+						: setupSliderOrbit();
+
+			log("Mode selected", {
+				mode: decision.mode,
+				enabled: decision.enabled,
+				reason: decision.reason,
+				metrics: decision.metrics,
+			});
+
+			if (decision.mode === "desktop-tall") ScrollTrigger.refresh();
+		}
+
+		function scheduleDecision({ force = false } = {}) {
+			if (orbit._ccOrbitDecisionRaf) cancelAnimationFrame(orbit._ccOrbitDecisionRaf);
+			orbit._ccOrbitDecisionRaf = requestAnimationFrame(() => {
+				orbit._ccOrbitDecisionRaf = 0;
+				applyOrbitDecision({ force });
+			});
+		}
+
+		const onViewportResize = () => scheduleDecision({ force: false });
+		window.addEventListener("resize", onViewportResize);
+
+		const onWindowLoad = () => scheduleDecision({ force: true });
+		window.addEventListener("load", onWindowLoad, { once: true });
+
+		if (document.fonts && typeof document.fonts.ready?.then === "function") {
+			document.fonts.ready.then(() => scheduleDecision({ force: true })).catch(() => {});
+		}
+
+		orbit._ccOrbitControllerCleanup = () => {
+			window.removeEventListener("resize", onViewportResize);
+			window.removeEventListener("load", onWindowLoad);
+			if (orbit._ccOrbitDecisionRaf) {
+				cancelAnimationFrame(orbit._ccOrbitDecisionRaf);
+				orbit._ccOrbitDecisionRaf = 0;
+			}
+			destroyMeasurementLayer();
+			teardownActiveMode();
+			orbit._ccOrbitControllerCleanup = null;
+		};
+
+		applyOrbitDecision({ force: true });
+		scheduleDecision({ force: true });
 	}
 
 	function c_solutionTabs() {
