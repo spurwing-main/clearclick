@@ -1293,12 +1293,158 @@ function main() {
 				goTo(state.index + 1);
 			}
 
+			const mobileMq = window.matchMedia("(max-width: 767px)");
+			const SWIPE_THRESHOLD_PX = 16;
+			let swipe = null;
+
+			function debugSwipe(eventName, detail = {}) {
+				return; // disable all swipe debug logs by default
+				console.log("[c_caseStudiesSimpleCarousel]", eventName, {
+					componentIndex: idx,
+					activeIndex: state.index,
+					isMobile: mobileMq.matches,
+					...detail,
+				});
+			}
+
+			function resetSwipe() {
+				if (swipe) debugSwipe("resetSwipe", { swipe: { ...swipe } });
+				swipe = null;
+			}
+
+			function finalizeSwipe(reason, detail = {}) {
+				if (!swipe) return;
+
+				const { id, dx, dy, axis } = swipe;
+				debugSwipe(reason, {
+					pointerId: id,
+					dx,
+					dy,
+					axis,
+					threshold: SWIPE_THRESHOLD_PX,
+					...detail,
+				});
+
+				if (axis !== "x") {
+					debugSwipe(`${reason}:ignored-non-horizontal`, { dx, dy, axis });
+					resetSwipe();
+					return;
+				}
+				if (Math.abs(dx) < SWIPE_THRESHOLD_PX) {
+					debugSwipe(`${reason}:ignored-below-threshold`, {
+						dx,
+						dy,
+						axis,
+						threshold: SWIPE_THRESHOLD_PX,
+					});
+					resetSwipe();
+					return;
+				}
+				if (Math.abs(dx) <= Math.abs(dy)) {
+					debugSwipe(`${reason}:ignored-vertical-dominant`, { dx, dy, axis });
+					resetSwipe();
+					return;
+				}
+
+				if (dx < 0) {
+					debugSwipe(`${reason}:navigate-next`, { dx, dy });
+					resetSwipe();
+					next();
+					return;
+				}
+
+				debugSwipe(`${reason}:navigate-prev`, { dx, dy });
+				resetSwipe();
+				prev();
+			}
+
+			function onPointerDown(e) {
+				if (!mobileMq.matches) {
+					debugSwipe("pointerdown:ignored-not-mobile", { pointerType: e.pointerType });
+					return;
+				}
+				if (e.pointerType === "mouse") {
+					debugSwipe("pointerdown:ignored-mouse", { pointerType: e.pointerType });
+					return;
+				}
+				if (e.target.closest("a, button, input, textarea, select, label")) {
+					debugSwipe("pointerdown:ignored-interactive-target", {
+						pointerType: e.pointerType,
+						tagName: e.target?.tagName || null,
+					});
+					return;
+				}
+
+				swipe = {
+					id: e.pointerId,
+					startX: e.clientX,
+					startY: e.clientY,
+					dx: 0,
+					dy: 0,
+					axis: null,
+				};
+
+				debugSwipe("pointerdown", {
+					pointerType: e.pointerType,
+					pointerId: e.pointerId,
+					startX: e.clientX,
+					startY: e.clientY,
+				});
+			}
+
+			function onPointerMove(e) {
+				if (!swipe || e.pointerId !== swipe.id) return;
+
+				swipe.dx = e.clientX - swipe.startX;
+				swipe.dy = e.clientY - swipe.startY;
+
+				if (!swipe.axis) {
+					if (Math.abs(swipe.dx) < 8 && Math.abs(swipe.dy) < 8) return;
+					swipe.axis = Math.abs(swipe.dx) > Math.abs(swipe.dy) ? "x" : "y";
+					debugSwipe("pointermove:axis-locked", {
+						pointerId: e.pointerId,
+						dx: swipe.dx,
+						dy: swipe.dy,
+						axis: swipe.axis,
+					});
+				}
+			}
+
+			function onPointerUp(e) {
+				if (!swipe || e.pointerId !== swipe.id) return;
+				finalizeSwipe("pointerup", { pointerId: e.pointerId });
+			}
+
+			function onPointerCancel(e) {
+				if (!swipe || e.pointerId !== swipe.id) return;
+				finalizeSwipe("pointercancel", { pointerId: e.pointerId });
+			}
+
+			function onLostPointerCapture(e) {
+				if (!swipe || e.pointerId !== swipe.id) return;
+				finalizeSwipe("lostpointercapture", { pointerId: e.pointerId });
+			}
+
 			if (prevBtn) {
 				prevBtn.addEventListener("click", prev, { signal: abort.signal });
 			}
 			if (nextBtn) {
 				nextBtn.addEventListener("click", next, { signal: abort.signal });
 			}
+
+			viewport.style.touchAction = "pan-y";
+			viewport.addEventListener("pointerdown", onPointerDown, { signal: abort.signal });
+			viewport.addEventListener("pointermove", onPointerMove, { signal: abort.signal });
+			viewport.addEventListener("pointerup", onPointerUp, { signal: abort.signal });
+			viewport.addEventListener("pointercancel", onPointerCancel, { signal: abort.signal });
+			viewport.addEventListener("lostpointercapture", onLostPointerCapture, {
+				signal: abort.signal,
+			});
+			debugSwipe("swipe-listeners-bound", {
+				touchAction: viewport.style.touchAction,
+				slideCount: slides.length,
+				threshold: SWIPE_THRESHOLD_PX,
+			});
 
 			// Optional: keyboard control when focused inside component
 			component.addEventListener(
