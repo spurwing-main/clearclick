@@ -145,7 +145,7 @@ function main() {
 	}
 
 	function anim_homeHeroCorners() {
-		const hero = document.querySelector(".c-home-hero");
+		const hero = document.querySelector(".cc-hero-corners");
 		if (!hero) return;
 		gsap.to(
 			hero,
