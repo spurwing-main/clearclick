@@ -1294,8 +1294,36 @@ function main() {
 			}
 
 			const mobileMq = window.matchMedia("(max-width: 767px)");
-			const SWIPE_THRESHOLD_PX = 16;
+			const SWIPE_THRESHOLD_TOUCH_PX = 16;
+			const SWIPE_THRESHOLD_MOUSE_PX = 28;
+			const SWIPE_THRESHOLD_PEN_PX = 20;
 			let swipe = null;
+
+			function isSwipeStartAllowed(e) {
+				if (!e) return false;
+				if (!["mouse", "touch", "pen"].includes(e.pointerType)) return false;
+				if (e.target.closest("a, button, input, textarea, select, label")) return false;
+				return true;
+			}
+
+			function getSwipeThresholdPx(pointerType) {
+				if (pointerType === "mouse") return SWIPE_THRESHOLD_MOUSE_PX;
+				if (pointerType === "pen") return SWIPE_THRESHOLD_PEN_PX;
+				return SWIPE_THRESHOLD_TOUCH_PX;
+			}
+
+			function releaseSwipePointerCapture(pointerId) {
+				if (pointerId == null) return;
+				if (typeof viewport.releasePointerCapture !== "function") return;
+				try {
+					if (
+						typeof viewport.hasPointerCapture !== "function" ||
+						viewport.hasPointerCapture(pointerId)
+					) {
+						viewport.releasePointerCapture(pointerId);
+					}
+				} catch (e) {}
+			}
 
 			function debugSwipe(eventName, detail = {}) {
 				return; // disable all swipe debug logs by default
@@ -1315,13 +1343,15 @@ function main() {
 			function finalizeSwipe(reason, detail = {}) {
 				if (!swipe) return;
 
-				const { id, dx, dy, axis } = swipe;
+				const { id, dx, dy, axis, pointerType } = swipe;
+				const threshold = getSwipeThresholdPx(pointerType);
 				debugSwipe(reason, {
 					pointerId: id,
+					pointerType,
 					dx,
 					dy,
 					axis,
-					threshold: SWIPE_THRESHOLD_PX,
+					threshold,
 					...detail,
 				});
 
@@ -1330,12 +1360,13 @@ function main() {
 					resetSwipe();
 					return;
 				}
-				if (Math.abs(dx) < SWIPE_THRESHOLD_PX) {
+				if (Math.abs(dx) < threshold) {
 					debugSwipe(`${reason}:ignored-below-threshold`, {
+						pointerType,
 						dx,
 						dy,
 						axis,
-						threshold: SWIPE_THRESHOLD_PX,
+						threshold,
 					});
 					resetSwipe();
 					return;
@@ -1359,16 +1390,8 @@ function main() {
 			}
 
 			function onPointerDown(e) {
-				if (!mobileMq.matches) {
-					debugSwipe("pointerdown:ignored-not-mobile", { pointerType: e.pointerType });
-					return;
-				}
-				if (e.pointerType === "mouse") {
-					debugSwipe("pointerdown:ignored-mouse", { pointerType: e.pointerType });
-					return;
-				}
-				if (e.target.closest("a, button, input, textarea, select, label")) {
-					debugSwipe("pointerdown:ignored-interactive-target", {
+				if (!isSwipeStartAllowed(e)) {
+					debugSwipe("pointerdown:ignored-start-not-allowed", {
 						pointerType: e.pointerType,
 						tagName: e.target?.tagName || null,
 					});
@@ -1377,12 +1400,19 @@ function main() {
 
 				swipe = {
 					id: e.pointerId,
+					pointerType: e.pointerType,
 					startX: e.clientX,
 					startY: e.clientY,
 					dx: 0,
 					dy: 0,
 					axis: null,
 				};
+
+				if (typeof viewport.setPointerCapture === "function") {
+					try {
+						viewport.setPointerCapture(e.pointerId);
+					} catch (err) {}
+				}
 
 				debugSwipe("pointerdown", {
 					pointerType: e.pointerType,
@@ -1412,11 +1442,13 @@ function main() {
 
 			function onPointerUp(e) {
 				if (!swipe || e.pointerId !== swipe.id) return;
+				releaseSwipePointerCapture(e.pointerId);
 				finalizeSwipe("pointerup", { pointerId: e.pointerId });
 			}
 
 			function onPointerCancel(e) {
 				if (!swipe || e.pointerId !== swipe.id) return;
+				releaseSwipePointerCapture(e.pointerId);
 				finalizeSwipe("pointercancel", { pointerId: e.pointerId });
 			}
 
@@ -1443,7 +1475,11 @@ function main() {
 			debugSwipe("swipe-listeners-bound", {
 				touchAction: viewport.style.touchAction,
 				slideCount: slides.length,
-				threshold: SWIPE_THRESHOLD_PX,
+				thresholds: {
+					touch: SWIPE_THRESHOLD_TOUCH_PX,
+					mouse: SWIPE_THRESHOLD_MOUSE_PX,
+					pen: SWIPE_THRESHOLD_PEN_PX,
+				},
 			});
 
 			// Optional: keyboard control when focused inside component
